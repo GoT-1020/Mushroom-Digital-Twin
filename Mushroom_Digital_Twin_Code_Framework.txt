@@ -1,0 +1,7288 @@
+"""
+==============================================================================
+SCIENTIFIC DIGITAL TWIN FOR OYSTER MUSHROOM CULTIVATION
+==============================================================================
+
+Version:
+    v2.0
+
+Author:
+    Lakshmi K
+"""
+
+# =============================================================================
+# IMPORT LIBRARIES
+# =============================================================================
+
+import math
+from datetime import datetime
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
+
+class Config:
+    """
+    Global configuration parameters.
+    """
+
+    # -------------------------------------------------------------------------
+    # Simulation
+    # -------------------------------------------------------------------------
+
+    TIME_STEP = 1.0                      # hour
+    SIMULATION_DAYS = 30
+    HOURS_PER_DAY = 24
+    TOTAL_STEPS = SIMULATION_DAYS * HOURS_PER_DAY
+
+    # -------------------------------------------------------------------------
+    # Chamber Geometry
+    # -------------------------------------------------------------------------
+
+    CHAMBER_LENGTH = 4.0                 # m
+    CHAMBER_WIDTH = 3.0                  # m
+    CHAMBER_HEIGHT = 2.5                 # m
+
+    CHAMBER_VOLUME = (
+        CHAMBER_LENGTH *
+        CHAMBER_WIDTH *
+        CHAMBER_HEIGHT
+    )
+
+    # -------------------------------------------------------------------------
+    # Initial Environmental Conditions
+    # -------------------------------------------------------------------------
+
+    INITIAL_TEMPERATURE = 28.0           # °C
+    INITIAL_HUMIDITY = 85.0              # %
+    INITIAL_CO2 = 1000.0                 # ppm
+    INITIAL_MOISTURE = 70.0              # %
+
+    AMBIENT_TEMPERATURE = 30.0           # °C
+
+    # -------------------------------------------------------------------------
+    # Initial Biological Conditions
+    # -------------------------------------------------------------------------
+
+    INITIAL_COLONIZATION = 1.0           # %
+    INITIAL_FRUIT_WEIGHT = 0.0           # g
+    INITIAL_HEALTH_INDEX = 100.0
+
+    # -------------------------------------------------------------------------
+    # Environmental Thresholds
+    # -------------------------------------------------------------------------
+
+    MIN_TEMPERATURE = 26.0
+    MAX_TEMPERATURE = 30.0
+
+    MIN_HUMIDITY = 80.0
+    MAX_HUMIDITY = 90.0
+
+    MIN_CO2 = 800.0
+    MAX_CO2 = 1500.0
+
+    MIN_MOISTURE = 60.0
+    MAX_MOISTURE = 80.0
+
+    # -------------------------------------------------------------------------
+    # Environment Model Coefficients
+    # -------------------------------------------------------------------------
+
+    KA = 0.08
+    KC = 0.60
+    KH = 0.45
+    KR = 0.01
+
+    KF = 1.20
+    KV = 0.90
+    KT = 0.02
+
+    KS = 0.80
+    KG = 0.005
+
+    ALPHA = 0.015
+    BETA = 0.010
+
+    BASELINE_CO2 = 420.0
+    MAX_ALLOWED_CO2 = 5000.0
+
+    CO2_VENTILATION = 60.0
+
+    # -------------------------------------------------------------------------
+    # Biological Model
+    # -------------------------------------------------------------------------
+
+    MU_MAX = 0.020
+
+    MAX_COLONIZATION = 100.0
+
+    PINNING_THRESHOLD = 90.0
+
+    W_MAX = 250.0
+
+    GOMPERTZ_K = 0.25
+
+    GOMPERTZ_T0 = 20.0
+
+    # -------------------------------------------------------------------------
+    # Respiration Model
+    # Jung & Son (2021)
+    # -------------------------------------------------------------------------
+
+    A1 = 143.370
+    A2 = 0.013
+    A3 = -137.343
+
+    # -------------------------------------------------------------------------
+    # Thornley Respiration
+    # -------------------------------------------------------------------------
+
+    MAINTENANCE_COEFFICIENT = 0.10
+    GROWTH_COEFFICIENT = 0.05
+
+    RESPIRATION_HEAT_COEFFICIENT = 0.01
+
+    # -------------------------------------------------------------------------
+    # Health Index Weights
+    # -------------------------------------------------------------------------
+
+    GPS_WEIGHT = 0.40
+
+    ECS_WEIGHT = 0.30
+
+    CCS_WEIGHT = 0.30
+
+    # -------------------------------------------------------------------------
+    # Actuator Initial States
+    # -------------------------------------------------------------------------
+
+    COOLING_PAD = False
+
+    HEATER = False
+
+    FOGGER = False
+
+    SPRINKLER = False
+
+    EXHAUST_FAN = False
+
+    FRESH_AIR_FAN = False
+
+
+# =============================================================================
+# DIGITAL TWIN STATE
+# =============================================================================
+
+class TwinState:
+    """
+    Represents the complete digital twin state.
+    """
+
+    def __init__(self):
+
+        # ---------------------------------------------------------------------
+        # Time
+        # ---------------------------------------------------------------------
+
+        self.current_hour = 0
+
+        self.current_day = 0
+
+        self.timestamp = datetime.now()
+
+        # ---------------------------------------------------------------------
+        # Growth Stage
+        # ---------------------------------------------------------------------
+
+        self.batch_id = "BATCH_001"
+
+        self.current_stage = "Preparation"
+
+        # ---------------------------------------------------------------------
+        # Environment
+        # ---------------------------------------------------------------------
+
+        self.temperature = Config.INITIAL_TEMPERATURE
+
+        self.humidity = Config.INITIAL_HUMIDITY
+
+        self.co2 = Config.INITIAL_CO2
+
+        self.moisture = Config.INITIAL_MOISTURE
+
+        # ---------------------------------------------------------------------
+        # Biological Variables
+        # ---------------------------------------------------------------------
+
+        self.colonization = Config.INITIAL_COLONIZATION
+
+        self.fruit_weight = Config.INITIAL_FRUIT_WEIGHT
+
+        self.pinhead_count = 0
+
+        self.fruit_count = 0
+
+        self.yield_estimate = 0.0
+
+        # ---------------------------------------------------------------------
+        # Computer Vision Variables
+        # ---------------------------------------------------------------------
+
+        self.contamination_level = 0.0
+
+        self.colonization_percentage = Config.INITIAL_COLONIZATION
+
+        # ---------------------------------------------------------------------
+        # Respiration Variables
+        # ---------------------------------------------------------------------
+
+        self.substrate_respiration = 0.0
+
+        self.fruit_respiration = 0.0
+
+        self.total_respiration = 0.0
+
+        self.respiration_heat = 0.0
+
+        # ---------------------------------------------------------------------
+        # Health Assessment
+        # ---------------------------------------------------------------------
+
+        self.growth_performance_score = 100.0
+
+        self.environment_score = 100.0
+
+        self.contamination_score = 100.0
+
+        self.health_index = Config.INITIAL_HEALTH_INDEX
+
+        # ---------------------------------------------------------------------
+        # Actuator States
+        # ---------------------------------------------------------------------
+
+        self.cooling_pad = Config.COOLING_PAD
+
+        self.heater = Config.HEATER
+
+        self.fogger = Config.FOGGER
+
+        self.sprinkler = Config.SPRINKLER
+
+        self.exhaust_fan = Config.EXHAUST_FAN
+
+        self.fresh_air_fan = Config.FRESH_AIR_FAN
+
+    def update_time(self):
+        """
+        Advance simulation by one hour.
+        """
+
+        self.current_hour += 1
+
+        self.current_day = self.current_hour // 24
+
+        self.timestamp = datetime.now()
+
+
+# =============================================================================
+# ENVIRONMENT MODEL
+# =============================================================================
+
+class EnvironmentModel:
+    """
+    Physical environment model for the mushroom cultivation chamber.
+
+    Responsibilities
+    ----------------
+    • Temperature Dynamics
+    • Humidity Dynamics 
+    • CO₂ Dynamics 
+    • Moisture Dynamics 
+
+    Mathematical Models
+    -------------------
+    • First-order thermal model
+    • First-order humidity model
+    • CO₂ mass balance
+    • Moisture balance
+    """
+
+    def __init__(self):
+
+        # ---------------------------------------------------------------------
+        # Temperature Model Parameters
+        # ---------------------------------------------------------------------
+
+        self.ka = Config.KA
+        self.kc = Config.KC
+        self.kh = Config.KH
+        self.kr = Config.KR
+
+        # ---------------------------------------------------------------------
+        # Humidity Model Parameters
+        # ---------------------------------------------------------------------
+
+        self.kf = Config.KF
+        self.kv = Config.KV
+        self.kt = Config.KT
+
+        # ---------------------------------------------------------------------
+        # Moisture Model Parameters
+        # ---------------------------------------------------------------------
+
+        self.ks = Config.KS
+        self.kg = Config.KG
+
+        # ---------------------------------------------------------------------
+        # Evaporation Parameters
+        # ---------------------------------------------------------------------
+
+        self.alpha = Config.ALPHA
+        self.beta = Config.BETA
+
+        # ---------------------------------------------------------------------
+        # Ambient Conditions
+        # ---------------------------------------------------------------------
+
+        self.ambient_temperature = Config.AMBIENT_TEMPERATURE
+
+    # =========================================================================
+    # PRIVATE HELPER METHODS
+    # =========================================================================
+
+    def _clamp(
+        self,
+        value: float,
+        minimum: float,
+        maximum: float
+    ) -> float:
+        """
+        Restrict a value within a specified range.
+        """
+
+        return max(minimum, min(value, maximum))
+
+    # =========================================================================
+    # EVAPORATION MODEL
+    # =========================================================================
+
+    def evaporation_rate(
+        self,
+        temperature: float,
+        humidity: float
+    ) -> float:
+        """
+        Calculates the evaporation rate.
+
+        Engineering Model
+
+        ke = α(T − 20) + β(100 − H)
+
+        Parameters
+        ----------
+        temperature : float
+            Chamber temperature (°C)
+
+        humidity : float
+            Relative humidity (%)
+
+        Returns
+        -------
+        float
+            Evaporation coefficient
+        """
+
+        evaporation = (
+
+            self.alpha *
+
+            (temperature - 20.0)
+
+            +
+
+            self.beta *
+
+            (100.0 - humidity)
+
+        )
+
+        evaporation = max(evaporation, 0.0)
+
+        return evaporation
+
+    # =========================================================================
+    # TEMPERATURE MODEL
+    # =========================================================================
+
+    def update_temperature(
+        self,
+        state: TwinState
+    ) -> None:
+        """
+        First-order chamber thermal dynamics.
+
+        Tk+1 = Tk + Δt[
+            ka(Tamb - Tk)
+            - kc(Uc)
+            + kh(Uh)
+            + kr(Qr)
+        ]
+        """
+
+        # ---------------------------------------------------------------------
+        # Ambient Heat Transfer
+        # ---------------------------------------------------------------------
+
+        ambient_heat = (
+
+            self.ka *
+
+            (
+
+                self.ambient_temperature
+
+                -
+
+                state.temperature
+
+            )
+
+        )
+
+        # ---------------------------------------------------------------------
+        # Cooling Pad Effect
+        # ---------------------------------------------------------------------
+
+        cooling_effect = 0.0
+
+        if state.cooling_pad:
+
+            cooling_effect = self.kc
+
+        # ---------------------------------------------------------------------
+        # Heater Effect
+        # ---------------------------------------------------------------------
+
+        heating_effect = 0.0
+
+        if state.heater:
+
+            heating_effect = self.kh
+
+        # ---------------------------------------------------------------------
+        # Respiration Heat
+        # ---------------------------------------------------------------------
+
+        respiration_effect = (
+
+            self.kr *
+
+            state.respiration_heat
+
+        )
+
+        # ---------------------------------------------------------------------
+        # Temperature Change
+        # ---------------------------------------------------------------------
+
+        delta_temperature = (
+
+            ambient_heat
+
+            -
+
+            cooling_effect
+
+            +
+
+            heating_effect
+
+            +
+
+            respiration_effect
+
+        )
+
+        # ---------------------------------------------------------------------
+        # Euler Integration
+        # ---------------------------------------------------------------------
+
+        state.temperature += (
+
+            Config.TIME_STEP *
+
+            delta_temperature
+
+        )
+
+        # ---------------------------------------------------------------------
+        # Physical Limits
+        # ---------------------------------------------------------------------
+
+        state.temperature = self._clamp(
+
+            state.temperature,
+
+            0.0,
+
+            50.0
+
+        )
+
+    # =========================================================================
+    # PLACEHOLDERS
+    # =========================================================================
+
+    def update_humidity(
+        self,
+        state: TwinState
+    ) -> None:
+       
+        pass
+
+    def update_co2(
+        self,
+        state: TwinState
+    ) -> None:
+       
+        pass
+
+    def update_moisture(
+        self,
+        state: TwinState
+    ) -> None:
+       
+        pass
+
+    def apply_limits(
+        self,
+        state: TwinState
+    ) -> None:
+        
+        pass
+
+    def update(
+        self,
+        state: TwinState
+    ) -> None:
+      
+         pass
+
+# =============================================================================
+# ENVIRONMENT MODEL (CONTINUED)
+# =============================================================================
+
+    # =========================================================================
+    # HUMIDITY MODEL
+    # =========================================================================
+
+    def update_humidity(
+        self,
+        state: TwinState
+    ) -> None:
+        """
+        Humidity Dynamics
+
+        H(k+1) = H(k) + Δt[
+            kf(Uf)
+            - kv(Ufan)
+            + kt(W)
+            - ke(T,H)
+        ]
+        """
+
+        # -------------------------------------------------------------
+        # Evaporation Loss
+        # -------------------------------------------------------------
+
+        evaporation_loss = self.evaporation_rate(
+            state.temperature,
+            state.humidity
+        )
+
+        # -------------------------------------------------------------
+        # Fogger Contribution
+        # -------------------------------------------------------------
+
+        fogger_gain = 0.0
+
+        if state.fogger:
+
+            fogger_gain = self.kf
+
+        # -------------------------------------------------------------
+        # Exhaust Ventilation
+        # -------------------------------------------------------------
+
+        ventilation_loss = 0.0
+
+        if state.exhaust_fan:
+
+            ventilation_loss = self.kv
+
+        # -------------------------------------------------------------
+        # Mushroom Transpiration
+        # -------------------------------------------------------------
+
+        transpiration_gain = (
+
+            self.kt *
+
+            state.fruit_weight
+
+        )
+
+        # -------------------------------------------------------------
+        # Total Humidity Change
+        # -------------------------------------------------------------
+
+        delta_humidity = (
+
+            fogger_gain
+
+            -
+
+            ventilation_loss
+
+            +
+
+            transpiration_gain
+
+            -
+
+            evaporation_loss
+
+        )
+
+        state.humidity += (
+
+            Config.TIME_STEP *
+
+            delta_humidity
+
+        )
+
+    # =========================================================================
+    # CO₂ MODEL
+    # =========================================================================
+
+    def update_co2(
+        self,
+        state: TwinState
+    ) -> None:
+        """
+        Chamber CO₂ Mass Balance
+
+        CO₂(k+1) = CO₂(k)
+                 + Respiration
+                 - Ventilation
+        """
+
+        # -------------------------------------------------------------
+        # Biological CO₂ Generation
+        # -------------------------------------------------------------
+
+        generation = (
+
+            state.total_respiration
+
+        )
+
+        # -------------------------------------------------------------
+        # Ventilation Removal
+        # -------------------------------------------------------------
+
+        ventilation = 0.0
+
+        if state.exhaust_fan:
+
+            ventilation = Config.CO2_VENTILATION
+
+        elif state.fresh_air_fan:
+
+            ventilation = (
+
+                Config.CO2_VENTILATION * 0.60
+
+            )
+
+        # -------------------------------------------------------------
+        # Chamber Mass Balance
+        # -------------------------------------------------------------
+
+        delta_co2 = (
+
+            generation
+
+            /
+
+            Config.CHAMBER_VOLUME
+
+            -
+
+            ventilation
+
+        )
+
+        state.co2 += (
+
+            Config.TIME_STEP *
+
+            delta_co2
+
+        )
+
+    # =========================================================================
+    # SUBSTRATE MOISTURE MODEL
+    # =========================================================================
+
+    def update_moisture(
+        self,
+        state: TwinState
+    ) -> None:
+        """
+        Substrate Moisture Dynamics
+
+        M(k+1)=M(k)
+
+              + Irrigation
+
+              - Evaporation
+
+              - Biological Consumption
+        """
+
+        # -------------------------------------------------------------
+        # Irrigation
+        # -------------------------------------------------------------
+
+        irrigation = 0.0
+
+        if state.sprinkler:
+
+            irrigation = self.ks
+
+        # -------------------------------------------------------------
+        # Evaporation
+        # -------------------------------------------------------------
+
+        evaporation = self.evaporation_rate(
+
+            state.temperature,
+
+            state.humidity
+
+        )
+
+        # -------------------------------------------------------------
+        # Water Consumption by Mycelium
+        # -------------------------------------------------------------
+
+        biological_loss = (
+
+            self.kg *
+
+            state.colonization
+
+        )
+
+        # -------------------------------------------------------------
+        # Moisture Balance
+        # -------------------------------------------------------------
+
+        delta_moisture = (
+
+            irrigation
+
+            -
+
+            evaporation
+
+            -
+
+            biological_loss
+
+        )
+
+        state.moisture += (
+
+            Config.TIME_STEP *
+
+            delta_moisture
+
+        )
+
+    # =========================================================================
+    # PHYSICAL LIMITS
+    # =========================================================================
+
+    def apply_limits(
+        self,
+        state: TwinState
+    ) -> None:
+        """
+        Restrict all environmental variables
+        to physically meaningful ranges.
+        """
+
+        state.temperature = self._clamp(
+
+            state.temperature,
+
+            0.0,
+
+            50.0
+
+        )
+
+        state.humidity = self._clamp(
+
+            state.humidity,
+
+            0.0,
+
+            100.0
+
+        )
+
+        state.co2 = self._clamp(
+
+            state.co2,
+
+            Config.BASELINE_CO2,
+
+            Config.MAX_ALLOWED_CO2
+
+        )
+
+        state.moisture = self._clamp(
+
+            state.moisture,
+
+            0.0,
+
+            100.0
+
+        )
+
+
+# =============================================================================
+# ENVIRONMENT MODEL 
+# =============================================================================
+
+    # =========================================================================
+    # MAIN ENVIRONMENT UPDATE
+    # =========================================================================
+
+    def update(
+        self,
+        state: TwinState
+    ) -> None:
+        """
+        Updates the complete chamber environment for one simulation step.
+        """
+
+        # -------------------------------------------------------------
+        # Temperature
+        # -------------------------------------------------------------
+
+        self.update_temperature(state)
+
+        # -------------------------------------------------------------
+        # Humidity
+        # -------------------------------------------------------------
+
+        self.update_humidity(state)
+
+        # -------------------------------------------------------------
+        # CO₂
+        # -------------------------------------------------------------
+
+        self.update_co2(state)
+
+        # -------------------------------------------------------------
+        # Moisture
+        # -------------------------------------------------------------
+
+        self.update_moisture(state)
+
+        # -------------------------------------------------------------
+        # Apply Physical Limits
+        # -------------------------------------------------------------
+
+        self.apply_limits(state)
+
+    # =========================================================================
+    # ENVIRONMENT STATUS
+    # =========================================================================
+
+    def get_environment_status(
+        self,
+        state: TwinState
+    ) -> dict:
+        """
+        Returns the current environmental conditions.
+        """
+
+        return {
+
+            "Temperature": state.temperature,
+
+            "Humidity": state.humidity,
+
+            "CO2": state.co2,
+
+            "Moisture": state.moisture
+
+        }
+
+    # =========================================================================
+    # ENVIRONMENT REPORT
+    # =========================================================================
+
+    def print_status(
+        self,
+        state: TwinState
+    ) -> None:
+        """
+        Prints the current environmental state.
+        """
+
+        print("\n")
+        print("=" * 60)
+        print("ENVIRONMENT STATUS")
+        print("=" * 60)
+
+        print(f"Temperature : {state.temperature:.2f} °C")
+        print(f"Humidity    : {state.humidity:.2f} %")
+        print(f"CO₂         : {state.co2:.2f} ppm")
+        print(f"Moisture    : {state.moisture:.2f} %")
+
+        print("=" * 60)
+
+    # =========================================================================
+    # ENVIRONMENT RESET
+    # =========================================================================
+
+    def reset(
+        self,
+        state: TwinState
+    ) -> None:
+        """
+        Reset environmental variables to their initial values.
+        """
+
+        state.temperature = Config.INITIAL_TEMPERATURE
+
+        state.humidity = Config.INITIAL_HUMIDITY
+
+        state.co2 = Config.INITIAL_CO2
+
+        state.moisture = Config.INITIAL_MOISTURE
+
+    # =========================================================================
+    # ENVIRONMENT VALIDATION
+    # =========================================================================
+
+    def validate(
+        self,
+        state: TwinState
+    ) -> bool:
+        """
+        Validate environmental variables.
+
+        Returns
+        -------
+        bool
+            True if all variables are valid.
+        """
+
+        valid = True
+
+        if state.temperature < 0.0:
+
+            valid = False
+
+        if state.temperature > 50.0:
+
+            valid = False
+
+        if state.humidity < 0.0:
+
+            valid = False
+
+        if state.humidity > 100.0:
+
+            valid = False
+
+        if state.co2 < Config.BASELINE_CO2:
+
+            valid = False
+
+        if state.co2 > Config.MAX_ALLOWED_CO2:
+
+            valid = False
+
+        if state.moisture < 0.0:
+
+            valid = False
+
+        if state.moisture > 100.0:
+
+            valid = False
+
+        return valid
+
+# =============================================================================
+# GROWTH MODEL
+# =============================================================================
+
+class GrowthModel:
+    """
+    Biological Growth Model
+
+    Models
+    ------
+    1. Environmental Growth Modifier
+    2. Logistic Colonization Model
+
+    """
+
+    def __init__(self):
+
+        # -------------------------------------------------------------
+        # Logistic Growth Parameters
+        # -------------------------------------------------------------
+
+        self.mu_max = Config.MU_MAX
+
+        self.max_colonization = Config.MAX_COLONIZATION
+
+        # -------------------------------------------------------------
+        # Gompertz Parameter
+        # -------------------------------------------------------------
+
+        self.w_max = Config.W_MAX
+
+        self.k = Config.GOMPERTZ_K
+
+        self.t0 = Config.GOMPERTZ_T0
+
+        self.pinning_threshold = Config.PINNING_THRESHOLD
+
+    # ===============================================================
+    # PRIVATE HELPER
+    # ===============================================================
+
+    def _linear_score(
+        self,
+        value: float,
+        optimum_min: float,
+        optimum_max: float,
+        minimum: float,
+        maximum: float
+    ) -> float:
+        """
+        Returns a normalized score
+        between 0 and 1.
+        """
+
+        if optimum_min <= value <= optimum_max:
+
+            return 1.0
+
+        if value < optimum_min:
+
+            if value <= minimum:
+
+                return 0.0
+
+            return (
+
+                (value - minimum)
+
+                /
+
+                (optimum_min - minimum)
+
+            )
+
+        if value >= maximum:
+
+            return 0.0
+
+        return (
+
+            (maximum - value)
+
+            /
+
+            (maximum - optimum_max)
+
+        )
+
+    # ===============================================================
+    # ENVIRONMENTAL MODIFIER
+    # ===============================================================
+
+    def environmental_modifier(
+        self,
+        state: TwinState
+    ) -> float:
+        """
+        Calculates the effective growth modifier.
+
+        μeff = μmax × fT × fH × fCO₂ × fM
+        """
+
+        # -------------------------------------------------------------
+        # Temperature Modifier
+        # -------------------------------------------------------------
+
+        f_temperature = self._linear_score(
+
+            state.temperature,
+
+            Config.MIN_TEMPERATURE,
+
+            Config.MAX_TEMPERATURE,
+
+            15.0,
+
+            40.0
+
+        )
+
+        # -------------------------------------------------------------
+        # Humidity Modifier
+        # -------------------------------------------------------------
+
+        f_humidity = self._linear_score(
+
+            state.humidity,
+
+            Config.MIN_HUMIDITY,
+
+            Config.MAX_HUMIDITY,
+
+            50.0,
+
+            100.0
+
+        )
+
+        # -------------------------------------------------------------
+        # CO₂ Modifier
+        # -------------------------------------------------------------
+
+        f_co2 = self._linear_score(
+
+            state.co2,
+
+            Config.MIN_CO2,
+
+            Config.MAX_CO2,
+
+            400.0,
+
+            5000.0
+
+        )
+
+        # -------------------------------------------------------------
+        # Moisture Modifier
+        # -------------------------------------------------------------
+
+        f_moisture = self._linear_score(
+
+            state.moisture,
+
+            Config.MIN_MOISTURE,
+
+            Config.MAX_MOISTURE,
+
+            30.0,
+
+            100.0
+
+        )
+
+        modifier = (
+
+            f_temperature *
+
+            f_humidity *
+
+            f_co2 *
+
+            f_moisture
+
+        )
+
+        modifier = max(
+
+            0.0,
+
+            min(
+
+                modifier,
+
+                1.0
+
+            )
+
+        )
+
+        return modifier
+
+    # ===============================================================
+    # LOGISTIC COLONIZATION MODEL
+    # ===============================================================
+
+    def update_colonization(
+        self,
+        state: TwinState
+    ) -> None:
+        """
+        Logistic Colonization Model
+
+        dC/dt = μeff C (1 - C/K)
+        """
+
+        modifier = self.environmental_modifier(
+
+            state
+
+        )
+
+        mu_effective = (
+
+            self.mu_max *
+
+            modifier
+
+        )
+
+        growth_rate = (
+
+            mu_effective *
+
+            state.colonization *
+
+            (
+
+                1.0 -
+
+                (
+
+                    state.colonization
+
+                    /
+
+                    self.max_colonization
+
+                )
+
+            )
+
+        )
+
+        state.colonization += (
+
+            Config.TIME_STEP *
+
+            growth_rate
+
+        )
+
+        if state.colonization > self.max_colonization:
+
+            state.colonization = self.max_colonization
+
+        state.colonization_percentage = (
+
+            state.colonization
+
+        )
+
+    # ===============================================================
+    # PLACEHOLDER
+    # ===============================================================
+
+    def update_fruit_growth(
+        self,
+        state: TwinState
+    ) -> None:
+
+        pass
+
+    def estimate_yield(
+        self,
+        state: TwinState
+    ) -> None:
+
+        pass
+
+    def update(
+        self,
+        state: TwinState
+    ) -> None:
+
+        pass
+
+
+# =============================================================================
+# GROWTH MODEL (CONTINUED)
+# =============================================================================
+
+    # ===============================================================
+    # GOMPERTZ FRUIT GROWTH MODEL
+    # ===============================================================
+
+    def update_fruit_growth(
+        self,
+        state: TwinState
+    ) -> None:
+        """
+        Gompertz Fruit Growth Model
+
+        W(t) = Wmax * exp[-exp(-k(t-t0))]
+
+        Fruit growth starts only after the
+        pinning threshold is reached.
+        """
+
+        # -------------------------------------------------------------
+        # Fruiting starts only after sufficient colonization
+        # -------------------------------------------------------------
+
+        if state.colonization < self.pinning_threshold:
+
+            state.fruit_weight = 0.0
+
+            state.pinhead_count = 0
+
+            state.fruit_count = 0
+
+            return
+
+        # -------------------------------------------------------------
+        # Simulation Time (Days)
+        # -------------------------------------------------------------
+
+        simulation_day = (
+
+            state.current_hour
+
+            /
+
+            24.0
+
+        )
+
+        # -------------------------------------------------------------
+        # Gompertz Growth
+        # -------------------------------------------------------------
+
+        fruit_weight = (
+
+            self.w_max
+
+            *
+
+            math.exp(
+
+                -
+
+                math.exp(
+
+                    -
+
+                    self.k
+
+                    *
+
+                    (
+
+                        simulation_day
+
+                        -
+
+                        self.t0
+
+                    )
+
+                )
+
+            )
+
+        )
+
+        # -------------------------------------------------------------
+        # Prevent Numerical Errors
+        # -------------------------------------------------------------
+
+        fruit_weight = max(
+
+            0.0,
+
+            fruit_weight
+
+        )
+
+        state.fruit_weight = fruit_weight
+
+        # -------------------------------------------------------------
+        # Approximate Pinhead Count
+        # -------------------------------------------------------------
+
+        state.pinhead_count = int(
+
+            max(
+
+                1,
+
+                fruit_weight / 12.0
+
+            )
+
+        )
+
+        # -------------------------------------------------------------
+        # Approximate Fruit Count
+        # -------------------------------------------------------------
+
+        state.fruit_count = int(
+
+            max(
+
+                1,
+
+                fruit_weight / 35.0
+
+            )
+
+        )
+
+    # ===============================================================
+    # YIELD ESTIMATION
+    # ===============================================================
+
+    def estimate_yield(
+        self,
+        state: TwinState
+    ) -> None:
+        """
+        Version 2.0
+
+        Estimated Yield = Fruit Weight
+        """
+
+        state.yield_estimate = (
+
+            state.fruit_weight
+
+        )
+
+    # ===============================================================
+    # GROWTH STATUS
+    # ===============================================================
+
+    def get_growth_status(
+        self,
+        state: TwinState
+    ) -> dict:
+
+        return {
+
+            "Colonization (%)":
+                state.colonization,
+
+            "Fruit Weight (g)":
+                state.fruit_weight,
+
+            "Pinhead Count":
+                state.pinhead_count,
+
+            "Fruit Count":
+                state.fruit_count,
+
+            "Yield (g)":
+                state.yield_estimate
+
+        }
+
+    # ===============================================================
+    # PRINT GROWTH STATUS
+    # ===============================================================
+
+    def print_status(
+        self,
+        state: TwinState
+    ) -> None:
+
+        print("\n")
+        print("=" * 60)
+        print("GROWTH MODEL")
+        print("=" * 60)
+
+        print(
+
+            f"Colonization : {state.colonization:.2f}%"
+
+        )
+
+        print(
+
+            f"Fruit Weight : {state.fruit_weight:.2f} g"
+
+        )
+
+        print(
+
+            f"Pinheads     : {state.pinhead_count}"
+
+        )
+
+        print(
+
+            f"Fruit Count  : {state.fruit_count}"
+
+        )
+
+        print(
+
+            f"Yield         : {state.yield_estimate:.2f} g"
+
+        )
+
+        print("=" * 60)
+
+    # ===============================================================
+    # MAIN UPDATE
+    # ===============================================================
+
+    def update(
+        self,
+        state: TwinState
+    ) -> None:
+        """
+        Executes one biological growth step.
+        """
+
+        self.update_colonization(
+
+            state
+
+        )
+
+        self.update_fruit_growth(
+
+            state
+
+        )
+
+        self.estimate_yield(
+
+            state
+
+        )
+
+    # ===============================================================
+    # VALIDATION
+    # ===============================================================
+
+    def validate(
+        self,
+        state: TwinState
+    ) -> bool:
+        """
+        Validate biological variables.
+        """
+
+        if state.colonization < 0.0:
+
+            return False
+
+        if state.colonization > 100.0:
+
+            return False
+
+        if state.fruit_weight < 0.0:
+
+            return False
+
+        if state.yield_estimate < 0.0:
+
+            return False
+
+        return True
+
+
+# =============================================================================
+# RESPIRATION MODEL
+# =============================================================================
+
+class RespirationModel:
+    """
+    Biological Respiration Model
+
+    Models
+    ------
+    1. Substrate Respiration
+    2. Fruit Respiration.
+    """
+
+    def __init__(self):
+
+        # -------------------------------------------------------------
+        # Jung & Son (2021)
+        # -------------------------------------------------------------
+
+        self.a1 = Config.A1
+        self.a2 = Config.A2
+        self.a3 = Config.A3
+
+        # -------------------------------------------------------------
+        # Thornley Model
+        # -------------------------------------------------------------
+
+        self.maintenance = Config.MAINTENANCE_COEFFICIENT
+        self.growth = Config.GROWTH_COEFFICIENT
+
+        # -------------------------------------------------------------
+        # Heat Conversion
+        # -------------------------------------------------------------
+
+        self.heat_coefficient = Config.RESPIRATION_HEAT_COEFFICIENT
+
+        # -------------------------------------------------------------
+        # Previous Fruit Weight
+        # -------------------------------------------------------------
+
+        self.previous_fruit_weight = 0.0
+
+    # ===============================================================
+    # SUBSTRATE RESPIRATION
+    # ===============================================================
+
+    def substrate_respiration(
+        self,
+        state: TwinState
+    ) -> float:
+        """
+        Jung & Son (2021)
+
+        Rm = a1 * exp(a2*T) + a3
+        """
+
+        respiration = (
+
+            self.a1 *
+
+            math.exp(
+
+                self.a2 *
+
+                state.temperature
+
+            )
+
+            +
+
+            self.a3
+
+        )
+
+        respiration = max(
+
+            0.0,
+
+            respiration
+
+        )
+
+        state.substrate_respiration = respiration
+
+        return respiration
+
+    # ===============================================================
+    # FRUIT RESPIRATION
+    # ===============================================================
+
+    def fruit_respiration(
+        self,
+        state: TwinState
+    ) -> float:
+        """
+        Thornley Respiration Model
+
+        R = MW + P(dW/dt)
+        """
+
+        # -------------------------------------------------------------
+        # Fruit Growth Rate
+        # -------------------------------------------------------------
+
+        growth_rate = (
+
+            state.fruit_weight
+
+            -
+
+            self.previous_fruit_weight
+
+        )
+
+        # -------------------------------------------------------------
+        # Respiration
+        # -------------------------------------------------------------
+
+        respiration = (
+
+            self.maintenance *
+
+            state.fruit_weight
+
+            +
+
+            self.growth *
+
+            growth_rate
+
+        )
+
+        respiration = max(
+
+            0.0,
+
+            respiration
+
+        )
+
+        self.previous_fruit_weight = (
+
+            state.fruit_weight
+
+        )
+
+        state.fruit_respiration = respiration
+
+        return respiration
+
+    # ===============================================================
+    # RESPIRATION STATUS
+    # ===============================================================
+
+    def get_respiration_status(
+        self,
+        state: TwinState
+    ) -> dict:
+
+        return {
+
+            "Substrate Respiration":
+
+                state.substrate_respiration,
+
+            "Fruit Respiration":
+
+                state.fruit_respiration
+
+        }
+
+    # ===============================================================
+    # PRINT RESPIRATION STATUS
+    # ===============================================================
+
+    def print_status(
+        self,
+        state: TwinState
+    ) -> None:
+
+        print("\n")
+
+        print("=" * 60)
+
+        print("RESPIRATION MODEL")
+
+        print("=" * 60)
+
+        print(
+
+            f"Substrate Respiration : "
+
+            f"{state.substrate_respiration:.3f}"
+
+        )
+
+        print(
+
+            f"Fruit Respiration     : "
+
+            f"{state.fruit_respiration:.3f}"
+
+        )
+
+        print("=" * 60)
+
+    # ===============================================================
+    # PLACEHOLDERS
+    # ===============================================================
+
+    def total_respiration(
+        self,
+        state: TwinState
+    ) -> float:
+
+        pass
+
+    def respiration_heat(
+        self,
+        state: TwinState
+    ) -> float:
+
+        pass
+
+    def update(
+        self,
+        state: TwinState
+    ) -> None:
+
+        pass
+
+    def validate(
+        self,
+        state: TwinState
+    ) -> bool:
+
+        pass
+
+
+# =============================================================================
+# RESPIRATION MODEL (CONTINUED)
+# =============================================================================
+
+    # ===============================================================
+    # TOTAL RESPIRATION
+    # ===============================================================
+
+    def total_respiration(
+        self,
+        state: TwinState
+    ) -> float:
+        """
+        Total Respiration
+
+        Rtotal = Rsubstrate + Rfruit
+        """
+
+        total = (
+
+            state.substrate_respiration
+
+            +
+
+            state.fruit_respiration
+
+        )
+
+        state.total_respiration = total
+
+        return total
+
+    # ===============================================================
+    # RESPIRATION HEAT
+    # ===============================================================
+
+    def respiration_heat(
+        self,
+        state: TwinState
+    ) -> float:
+        """
+        Respiration Heat
+
+        Q = kr × Rtotal
+        """
+
+        heat = (
+
+            self.heat_coefficient
+
+            *
+
+            state.total_respiration
+
+        )
+
+        state.respiration_heat = heat
+
+        return heat
+
+    # ===============================================================
+    # MAIN UPDATE
+    # ===============================================================
+
+    def update(
+        self,
+        state: TwinState
+    ) -> None:
+        """
+        Execute one respiration update step.
+        """
+
+        # -------------------------------------------------------------
+        # Substrate Respiration
+        # -------------------------------------------------------------
+
+        self.substrate_respiration(
+
+            state
+
+        )
+
+        # -------------------------------------------------------------
+        # Fruit Respiration
+        # -------------------------------------------------------------
+
+        self.fruit_respiration(
+
+            state
+
+        )
+
+        # -------------------------------------------------------------
+        # Total Respiration
+        # -------------------------------------------------------------
+
+        self.total_respiration(
+
+            state
+
+        )
+
+        # -------------------------------------------------------------
+        # Respiration Heat
+        # -------------------------------------------------------------
+
+        self.respiration_heat(
+
+            state
+
+        )
+
+    # ===============================================================
+    # VALIDATION
+    # ===============================================================
+
+    def validate(
+        self,
+        state: TwinState
+    ) -> bool:
+        """
+        Validate respiration variables.
+        """
+
+        if state.substrate_respiration < 0.0:
+
+            return False
+
+        if state.fruit_respiration < 0.0:
+
+            return False
+
+        if state.total_respiration < 0.0:
+
+            return False
+
+        if state.respiration_heat < 0.0:
+
+            return False
+
+        return True
+
+    # ===============================================================
+    # COMPLETE RESPIRATION STATUS
+    # ===============================================================
+
+    def get_complete_status(
+        self,
+        state: TwinState
+    ) -> dict:
+        """
+        Returns all respiration-related variables.
+        """
+
+        return {
+
+            "Substrate Respiration":
+
+                state.substrate_respiration,
+
+            "Fruit Respiration":
+
+                state.fruit_respiration,
+
+            "Total Respiration":
+
+                state.total_respiration,
+
+            "Respiration Heat":
+
+                state.respiration_heat
+
+        }
+
+    # ===============================================================
+    # PRINT COMPLETE STATUS
+    # ===============================================================
+
+    def print_complete_status(
+        self,
+        state: TwinState
+    ) -> None:
+
+        print("\n")
+
+        print("=" * 60)
+
+        print("RESPIRATION MODEL")
+
+        print("=" * 60)
+
+        print(
+
+            f"Substrate Respiration : "
+
+            f"{state.substrate_respiration:.4f}"
+
+        )
+
+        print(
+
+            f"Fruit Respiration     : "
+
+            f"{state.fruit_respiration:.4f}"
+
+        )
+
+        print(
+
+            f"Total Respiration     : "
+
+            f"{state.total_respiration:.4f}"
+
+        )
+
+        print(
+
+            f"Respiration Heat      : "
+
+            f"{state.respiration_heat:.4f}"
+
+        )
+
+        print("=" * 60)
+
+
+# =============================================================================
+# HEALTH MODEL
+# =============================================================================
+
+class HealthModel:
+    """
+    Digital Twin Health Assessment Model
+
+    Computes
+
+    1. Environmental Health Score (EHS)
+    2. Growth Health Score (GHS)
+    3. Contamination Health Score (CHS)
+    """
+
+    def __init__(self):
+
+        self.environment_weight = Config.ECS_WEIGHT
+
+        self.growth_weight = Config.GPS_WEIGHT
+
+        self.contamination_weight = Config.CCS_WEIGHT
+
+    # ===============================================================
+    # PRIVATE HELPER
+    # ===============================================================
+
+    def _score(
+        self,
+        value: float,
+        optimum_min: float,
+        optimum_max: float,
+        minimum: float,
+        maximum: float
+    ) -> float:
+        """
+        Returns a normalized score
+        between 0 and 100.
+        """
+
+        if optimum_min <= value <= optimum_max:
+
+            return 100.0
+
+        if value < optimum_min:
+
+            if value <= minimum:
+
+                return 0.0
+
+            score = (
+
+                (value - minimum)
+
+                /
+
+                (optimum_min - minimum)
+
+            )
+
+            return score * 100.0
+
+        if value >= maximum:
+
+            return 0.0
+
+        score = (
+
+            (maximum - value)
+
+            /
+
+            (maximum - optimum_max)
+
+        )
+
+        return score * 100.0
+
+    # ===============================================================
+    # ENVIRONMENT HEALTH SCORE
+    # ===============================================================
+
+    def environment_score(
+        self,
+        state: TwinState
+    ) -> float:
+        """
+        Calculates environmental health.
+        """
+
+        temperature_score = self._score(
+
+            state.temperature,
+
+            Config.MIN_TEMPERATURE,
+
+            Config.MAX_TEMPERATURE,
+
+            15.0,
+
+            40.0
+
+        )
+
+        humidity_score = self._score(
+
+            state.humidity,
+
+            Config.MIN_HUMIDITY,
+
+            Config.MAX_HUMIDITY,
+
+            50.0,
+
+            100.0
+
+        )
+
+        co2_score = self._score(
+
+            state.co2,
+
+            Config.MIN_CO2,
+
+            Config.MAX_CO2,
+
+            400.0,
+
+            Config.MAX_ALLOWED_CO2
+
+        )
+
+        moisture_score = self._score(
+
+            state.moisture,
+
+            Config.MIN_MOISTURE,
+
+            Config.MAX_MOISTURE,
+
+            30.0,
+
+            100.0
+
+        )
+
+        environment = (
+
+            temperature_score
+
+            +
+
+            humidity_score
+
+            +
+
+            co2_score
+
+            +
+
+            moisture_score
+
+        ) / 4.0
+
+        state.environment_score = environment
+
+        return environment
+
+    # ===============================================================
+    # GROWTH HEALTH SCORE
+    # ===============================================================
+
+    def growth_score(
+        self,
+        state: TwinState
+    ) -> float:
+        """
+        Growth health based on colonization.
+        """
+
+        score = max(
+
+            0.0,
+
+            min(
+
+                state.colonization,
+
+                100.0
+
+            )
+
+        )
+
+        state.growth_performance_score = score
+
+        return score
+
+    # ===============================================================
+    # CONTAMINATION HEALTH SCORE
+    # ===============================================================
+
+    def contamination_score(
+        self,
+        state: TwinState
+    ) -> float:
+        """
+        Computes contamination score.
+        """
+
+        contamination = max(
+
+            0.0,
+
+            min(
+
+                state.contamination_level,
+
+                100.0
+
+            )
+
+        )
+
+        score = 100.0 - contamination
+
+        state.contamination_score = score
+
+        return score
+
+    # ===============================================================
+    # PLACEHOLDERS
+    # ===============================================================
+
+    def health_index(
+        self,
+        state: TwinState
+    ) -> float:
+
+        pass
+
+    def health_status(
+        self,
+        state: TwinState
+    ) -> str:
+
+        pass
+
+    def update(
+        self,
+        state: TwinState
+    ) -> None:
+
+        pass
+
+    def validate(
+        self,
+        state: TwinState
+    ) -> bool:
+
+        pass
+
+
+
+# =============================================================================
+# PART 5.2
+# HEALTH MODEL (CONTINUED)
+# =============================================================================
+
+    # ===============================================================
+    # OVERALL HEALTH INDEX
+    # ===============================================================
+
+    def health_index(
+        self,
+        state: TwinState
+    ) -> float:
+        """
+        Computes the overall health index.
+        """
+
+        health = (
+
+            self.growth_weight *
+
+            state.growth_performance_score
+
+            +
+
+            self.environment_weight *
+
+            state.environment_score
+
+            +
+
+            self.contamination_weight *
+
+            state.contamination_score
+
+        )
+
+        state.health_index = max(
+
+            0.0,
+
+            min(
+
+                health,
+
+                100.0
+
+            )
+
+        )
+
+        return state.health_index
+
+    # ===============================================================
+    # HEALTH STATUS
+    # ===============================================================
+
+    def health_status(
+        self,
+        state: TwinState
+    ) -> str:
+        """
+        Returns the health category.
+        """
+
+        health = state.health_index
+
+        if health >= 90.0:
+
+            return "EXCELLENT"
+
+        elif health >= 80.0:
+
+            return "HEALTHY"
+
+        elif health >= 60.0:
+
+            return "WARNING"
+
+        return "CRITICAL"
+
+    # ===============================================================
+    # COMPLETE UPDATE
+    # ===============================================================
+
+    def update(
+        self,
+        state: TwinState
+    ) -> None:
+        """
+        Executes one complete health assessment.
+        """
+
+        self.environment_score(
+
+            state
+
+        )
+
+        self.growth_score(
+
+            state
+
+        )
+
+        self.contamination_score(
+
+            state
+
+        )
+
+        self.health_index(
+
+            state
+
+        )
+
+    # ===============================================================
+    # HEALTH REPORT
+    # ===============================================================
+
+    def get_health_status(
+        self,
+        state: TwinState
+    ) -> dict:
+        """
+        Returns all health information.
+        """
+
+        return {
+
+            "Environment Score":
+
+                state.environment_score,
+
+            "Growth Score":
+
+                state.growth_performance_score,
+
+            "Contamination Score":
+
+                state.contamination_score,
+
+            "Health Index":
+
+                state.health_index,
+
+            "Health Status":
+
+                self.health_status(
+
+                    state
+
+                )
+
+        }
+
+    # ===============================================================
+    # PRINT HEALTH STATUS
+    # ===============================================================
+
+    def print_status(
+        self,
+        state: TwinState
+    ) -> None:
+
+        print("\n")
+
+        print("=" * 60)
+
+        print("HEALTH MODEL")
+
+        print("=" * 60)
+
+        print(
+
+            f"Environment Score   : "
+
+            f"{state.environment_score:.2f}"
+
+        )
+
+        print(
+
+            f"Growth Score        : "
+
+            f"{state.growth_performance_score:.2f}"
+
+        )
+
+        print(
+
+            f"Contamination Score : "
+
+            f"{state.contamination_score:.2f}"
+
+        )
+
+        print(
+
+            f"Health Index        : "
+
+            f"{state.health_index:.2f}"
+
+        )
+
+        print(
+
+            f"Overall Status      : "
+
+            f"{self.health_status(state)}"
+
+        )
+
+        print("=" * 60)
+
+    # ===============================================================
+    # VALIDATION
+    # ===============================================================
+
+    def validate(
+        self,
+        state: TwinState
+    ) -> bool:
+        """
+        Validate health variables.
+        """
+
+        if not (0.0 <= state.environment_score <= 100.0):
+
+            return False
+
+        if not (0.0 <= state.growth_performance_score <= 100.0):
+
+            return False
+
+        if not (0.0 <= state.contamination_score <= 100.0):
+
+            return False
+
+        if not (0.0 <= state.health_index <= 100.0):
+
+            return False
+
+        return True
+
+# =============================================================================
+# PART 6.1
+# STAGE MODEL
+# =============================================================================
+
+class StageModel:
+    """
+    Growth Stage Model
+
+    Determines the current cultivation stage
+    based on the biological state of the crop.
+
+    Stages
+
+    1. Preparation
+    2. Inoculation
+    3. Spawn Run
+    4. Pinhead Formation
+    5. Fruiting
+    6. Harvesting
+    """
+
+    def __init__(self):
+
+        self.stages = [
+
+            "Preparation",
+
+            "Inoculation",
+
+            "Spawn Run",
+
+            "Pinhead Formation",
+
+            "Fruiting",
+
+            "Harvesting"
+
+        ]
+
+    # ===============================================================
+    # PREPARATION
+    # ===============================================================
+
+    def is_preparation(
+        self,
+        state: TwinState
+    ) -> bool:
+
+        return state.current_day == 0
+
+    # ===============================================================
+    # INOCULATION
+    # ===============================================================
+
+    def is_inoculation(
+        self,
+        state: TwinState
+    ) -> bool:
+
+        return (
+
+            state.current_day >= 1
+
+            and
+
+            state.colonization < 5
+
+        )
+
+    # ===============================================================
+    # SPAWN RUN
+    # ===============================================================
+
+    def is_spawn_run(
+        self,
+        state: TwinState
+    ) -> bool:
+
+        return (
+
+            5
+
+            <=
+
+            state.colonization
+
+            <
+
+            Config.PINNING_THRESHOLD
+
+        )
+
+    # ===============================================================
+    # PINHEAD FORMATION
+    # ===============================================================
+
+    def is_pinhead(
+        self,
+        state: TwinState
+    ) -> bool:
+
+        return (
+
+            state.colonization
+
+            >=
+
+            Config.PINNING_THRESHOLD
+
+            and
+
+            state.pinhead_count > 0
+
+            and
+
+            state.fruit_weight < 50
+
+        )
+
+    # ===============================================================
+    # FRUITING
+    # ===============================================================
+
+    def is_fruiting(
+        self,
+        state: TwinState
+    ) -> bool:
+
+        return (
+
+            state.fruit_weight >= 50
+
+            and
+
+            state.fruit_weight <
+
+            0.90 *
+
+            Config.W_MAX
+
+        )
+
+    # ===============================================================
+    # HARVESTING
+    # ===============================================================
+
+    def is_harvest(
+        self,
+        state: TwinState
+    ) -> bool:
+
+        return (
+
+            state.fruit_weight
+
+            >=
+
+            0.90 *
+
+            Config.W_MAX
+
+        )
+
+    # ===============================================================
+    # PLACEHOLDERS
+    # ===============================================================
+
+    def determine_stage(
+        self,
+        state: TwinState
+    ):
+
+        pass
+
+    def update(
+        self,
+        state: TwinState
+    ):
+
+        pass
+
+    def validate(
+        self,
+        state: TwinState
+    ):
+
+        pass
+
+# =============================================================================
+# PART 6.2
+# STAGE MODEL (CONTINUED)
+# =============================================================================
+
+    # ===============================================================
+    # DETERMINE CURRENT STAGE
+    # ===============================================================
+
+    def determine_stage(
+        self,
+        state: TwinState
+    ) -> str:
+        """
+        Determine the current cultivation stage.
+        """
+
+        if self.is_preparation(state):
+
+            stage = "Preparation"
+
+        elif self.is_inoculation(state):
+
+            stage = "Inoculation"
+
+        elif self.is_spawn_run(state):
+
+            stage = "Spawn Run"
+
+        elif self.is_pinhead(state):
+
+            stage = "Pinhead Formation"
+
+        elif self.is_fruiting(state):
+
+            stage = "Fruiting"
+
+        elif self.is_harvest(state):
+
+            stage = "Harvesting"
+
+        else:
+
+            stage = state.current_stage
+
+        state.current_stage = stage
+
+        return stage
+
+    # ===============================================================
+    # UPDATE STAGE
+    # ===============================================================
+
+    def update(
+        self,
+        state: TwinState
+    ) -> None:
+        """
+        Update cultivation stage.
+        """
+
+        self.determine_stage(
+
+            state
+
+        )
+
+    # ===============================================================
+    # STAGE INFORMATION
+    # ===============================================================
+
+    def get_stage_status(
+        self,
+        state: TwinState
+    ) -> dict:
+        """
+        Returns stage information.
+        """
+
+        return {
+
+            "Batch ID":
+
+                state.batch_id,
+
+            "Current Stage":
+
+                state.current_stage,
+
+            "Current Day":
+
+                state.current_day,
+
+            "Colonization":
+
+                state.colonization,
+
+            "Fruit Weight":
+
+                state.fruit_weight,
+
+            "Pinhead Count":
+
+                state.pinhead_count,
+
+            "Fruit Count":
+
+                state.fruit_count
+
+        }
+
+    # ===============================================================
+    # PRINT STAGE STATUS
+    # ===============================================================
+
+    def print_status(
+        self,
+        state: TwinState
+    ) -> None:
+
+        print("\n")
+
+        print("=" * 60)
+
+        print("STAGE MODEL")
+
+        print("=" * 60)
+
+        print(
+
+            f"Batch ID        : {state.batch_id}"
+
+        )
+
+        print(
+
+            f"Current Day     : {state.current_day}"
+
+        )
+
+        print(
+
+            f"Current Stage   : {state.current_stage}"
+
+        )
+
+        print(
+
+            f"Colonization    : {state.colonization:.2f}%"
+
+        )
+
+        print(
+
+            f"Fruit Weight    : {state.fruit_weight:.2f} g"
+
+        )
+
+        print(
+
+            f"Pinhead Count   : {state.pinhead_count}"
+
+        )
+
+        print(
+
+            f"Fruit Count     : {state.fruit_count}"
+
+        )
+
+        print("=" * 60)
+
+    # ===============================================================
+    # RESET STAGE
+    # ===============================================================
+
+    def reset(
+        self,
+        state: TwinState
+    ) -> None:
+        """
+        Reset stage information.
+        """
+
+        state.current_stage = "Preparation"
+
+    # ===============================================================
+    # VALIDATION
+    # ===============================================================
+
+    def validate(
+        self,
+        state: TwinState
+    ) -> bool:
+        """
+        Validate stage information.
+        """
+
+        if state.current_stage not in self.stages:
+
+            return False
+
+        if state.current_day < 0:
+
+            return False
+
+        return True
+
+
+
+# =============================================================================
+# PART 7.1
+# DATA LOGGER
+# =============================================================================
+
+class DataLogger:
+    """
+    Digital Twin Data Logger
+
+    Responsible for
+
+    • Recording simulation data
+    • Exporting CSV
+    • Providing DataFrame
+    """
+
+    def __init__(self):
+
+        self.records = []
+
+    # ===============================================================
+    # LOG ONE SIMULATION STEP
+    # ===============================================================
+
+    def log(
+        self,
+        state: TwinState
+    ) -> None:
+        """
+        Record current digital twin state.
+        """
+
+        record = {
+
+            # ---------------------------------------------------------
+            # Time
+            # ---------------------------------------------------------
+
+            "Hour":
+
+                state.current_hour,
+
+            "Day":
+
+                state.current_day,
+
+            "Timestamp":
+
+                state.timestamp,
+
+            # ---------------------------------------------------------
+            # Stage
+            # ---------------------------------------------------------
+
+            "Stage":
+
+                state.current_stage,
+
+            # ---------------------------------------------------------
+            # Environment
+            # ---------------------------------------------------------
+
+            "Temperature":
+
+                state.temperature,
+
+            "Humidity":
+
+                state.humidity,
+
+            "CO2":
+
+                state.co2,
+
+            "Moisture":
+
+                state.moisture,
+
+            # ---------------------------------------------------------
+            # Growth
+            # ---------------------------------------------------------
+
+            "Colonization":
+
+                state.colonization,
+
+            "FruitWeight":
+
+                state.fruit_weight,
+
+            "PinheadCount":
+
+                state.pinhead_count,
+
+            "FruitCount":
+
+                state.fruit_count,
+
+            "Yield":
+
+                state.yield_estimate,
+
+            # ---------------------------------------------------------
+            # Respiration
+            # ---------------------------------------------------------
+
+            "SubstrateRespiration":
+
+                state.substrate_respiration,
+
+            "FruitRespiration":
+
+                state.fruit_respiration,
+
+            "TotalRespiration":
+
+                state.total_respiration,
+
+            "RespirationHeat":
+
+                state.respiration_heat,
+
+            # ---------------------------------------------------------
+            # Health
+            # ---------------------------------------------------------
+
+            "EnvironmentScore":
+
+                state.environment_score,
+
+            "GrowthScore":
+
+                state.growth_performance_score,
+
+            "ContaminationScore":
+
+                state.contamination_score,
+
+            "HealthIndex":
+
+                state.health_index,
+
+            # ---------------------------------------------------------
+            # Computer Vision
+            # ---------------------------------------------------------
+
+            "ContaminationLevel":
+
+                state.contamination_level,
+
+            # ---------------------------------------------------------
+            # Actuators
+            # ---------------------------------------------------------
+
+            "CoolingPad":
+
+                state.cooling_pad,
+
+            "Heater":
+
+                state.heater,
+
+            "Fogger":
+
+                state.fogger,
+
+            "Sprinkler":
+
+                state.sprinkler,
+
+            "ExhaustFan":
+
+                state.exhaust_fan,
+
+            "FreshAirFan":
+
+                state.fresh_air_fan
+
+        }
+
+        self.records.append(
+
+            record
+
+        )
+
+    # ===============================================================
+    # RETURN DATAFRAME
+    # ===============================================================
+
+    def to_dataframe(
+        self
+    ) -> pd.DataFrame:
+
+        return pd.DataFrame(
+
+            self.records
+
+        )
+
+    # ===============================================================
+    # NUMBER OF RECORDS
+    # ===============================================================
+
+    def size(
+        self
+    ) -> int:
+
+        return len(
+
+            self.records
+
+        )
+
+    # ===============================================================
+    # CLEAR LOGGER
+    # ===============================================================
+
+    def clear(
+        self
+    ) -> None:
+
+        self.records.clear()
+
+    # ===============================================================
+    # PLACEHOLDERS
+    # ===============================================================
+
+    def export_csv(
+        self,
+        filename="simulation_results.csv"
+    ):
+
+        pass
+
+    def summary(
+        self
+    ):
+
+        pass
+
+# =============================================================================
+# PART 7.2
+# DATA LOGGER (CONTINUED)
+# =============================================================================
+
+    # ===============================================================
+    # EXPORT CSV
+    # ===============================================================
+
+    def export_csv(
+        self,
+        filename: str = "simulation_results.csv"
+    ) -> None:
+        """
+        Export all logged simulation data to CSV.
+        """
+
+        dataframe = self.to_dataframe()
+
+        dataframe.to_csv(
+
+            filename,
+
+            index=False
+
+        )
+
+    # ===============================================================
+    # SUMMARY
+    # ===============================================================
+
+    def summary(
+        self
+    ) -> None:
+        """
+        Display summary information.
+        """
+
+        print("\n")
+
+        print("=" * 60)
+
+        print("SIMULATION SUMMARY")
+
+        print("=" * 60)
+
+        print(
+
+            f"Total Records : {self.size()}"
+
+        )
+
+        if self.size() > 0:
+
+            df = self.to_dataframe()
+
+            print(
+
+                f"Simulation Days : "
+
+                f"{df['Day'].max()}"
+
+            )
+
+            print(
+
+                f"Maximum Yield   : "
+
+                f"{df['Yield'].max():.2f} g"
+
+            )
+
+            print(
+
+                f"Maximum CO₂     : "
+
+                f"{df['CO2'].max():.2f} ppm"
+
+            )
+
+            print(
+
+                f"Maximum Temperature : "
+
+                f"{df['Temperature'].max():.2f} °C"
+
+            )
+
+            print(
+
+                f"Minimum Humidity : "
+
+                f"{df['Humidity'].min():.2f} %"
+
+            )
+
+        print("=" * 60)
+
+    # ===============================================================
+    # LAST RECORD
+    # ===============================================================
+
+    def last_record(
+        self
+    ) -> dict:
+        """
+        Return the latest simulation record.
+        """
+
+        if self.size() == 0:
+
+            return {}
+
+        return self.records[-1]
+
+    # ===============================================================
+    # PRINT LAST RECORD
+    # ===============================================================
+
+    def print_last_record(
+        self
+    ) -> None:
+        """
+        Print the latest logged record.
+        """
+
+        if self.size() == 0:
+
+            print("\nNo records available.")
+
+            return
+
+        record = self.last_record()
+
+        print("\n")
+
+        print("=" * 60)
+
+        print("LATEST DIGITAL TWIN STATE")
+
+        print("=" * 60)
+
+        for key, value in record.items():
+
+            print(f"{key:<25}: {value}")
+
+        print("=" * 60)
+
+    # ===============================================================
+    # GET COLUMN
+    # ===============================================================
+
+    def get_column(
+        self,
+        column_name: str
+    ):
+        """
+        Return one column as a list.
+        """
+
+        dataframe = self.to_dataframe()
+
+        if column_name not in dataframe.columns:
+
+            return []
+
+        return dataframe[column_name].tolist()
+
+    # ===============================================================
+    # VALIDATION
+    # ===============================================================
+
+    def validate(
+        self
+    ) -> bool:
+        """
+        Validate logger contents.
+        """
+
+        if not isinstance(
+
+            self.records,
+
+            list
+
+        ):
+
+            return False
+
+        return True
+
+# =============================================================================
+# PART 8.1
+# PLOTTER
+# =============================================================================
+
+class Plotter:
+    """
+    Scientific Digital Twin Visualization Module
+    """
+
+    def __init__(self):
+
+        pass
+
+    # ===============================================================
+    # PRIVATE HELPER
+    # ===============================================================
+
+    def _prepare_dataframe(
+        self,
+        logger: DataLogger
+    ) -> pd.DataFrame:
+
+        return logger.to_dataframe()
+
+    # ===============================================================
+    # TEMPERATURE
+    # ===============================================================
+
+    def plot_temperature(
+        self,
+        logger: DataLogger
+    ) -> None:
+
+        df = self._prepare_dataframe(logger)
+
+        plt.figure(figsize=(10,5))
+
+        plt.plot(
+
+            df["Hour"],
+
+            df["Temperature"],
+
+            linewidth=2
+
+        )
+
+        plt.title("Temperature")
+
+        plt.xlabel("Hour")
+
+        plt.ylabel("Temperature (°C)")
+
+        plt.grid(True)
+
+        plt.tight_layout()
+
+        plt.show()
+
+    # ===============================================================
+    # HUMIDITY
+    # ===============================================================
+
+    def plot_humidity(
+        self,
+        logger: DataLogger
+    ) -> None:
+
+        df = self._prepare_dataframe(logger)
+
+        plt.figure(figsize=(10,5))
+
+        plt.plot(
+
+            df["Hour"],
+
+            df["Humidity"],
+
+            linewidth=2
+
+        )
+
+        plt.title("Humidity")
+
+        plt.xlabel("Hour")
+
+        plt.ylabel("Humidity (%)")
+
+        plt.grid(True)
+
+        plt.tight_layout()
+
+        plt.show()
+
+    # ===============================================================
+    # CO₂
+    # ===============================================================
+
+    def plot_co2(
+        self,
+        logger: DataLogger
+    ) -> None:
+
+        df = self._prepare_dataframe(logger)
+
+        plt.figure(figsize=(10,5))
+
+        plt.plot(
+
+            df["Hour"],
+
+            df["CO2"],
+
+            linewidth=2
+
+        )
+
+        plt.title("CO₂")
+
+        plt.xlabel("Hour")
+
+        plt.ylabel("CO₂ (ppm)")
+
+        plt.grid(True)
+
+        plt.tight_layout()
+
+        plt.show()
+
+    # ===============================================================
+    # MOISTURE
+    # ===============================================================
+
+    def plot_moisture(
+        self,
+        logger: DataLogger
+    ) -> None:
+
+        df = self._prepare_dataframe(logger)
+
+        plt.figure(figsize=(10,5))
+
+        plt.plot(
+
+            df["Hour"],
+
+            df["Moisture"],
+
+            linewidth=2
+
+        )
+
+        plt.title("Substrate Moisture")
+
+        plt.xlabel("Hour")
+
+        plt.ylabel("Moisture (%)")
+
+        plt.grid(True)
+
+        plt.tight_layout()
+
+        plt.show()
+
+    # ===============================================================
+    # PLACEHOLDERS
+    # ===============================================================
+
+    def plot_growth(
+        self,
+        logger: DataLogger
+    ):
+
+        pass
+
+    def plot_health(
+        self,
+        logger: DataLogger
+    ):
+
+        pass
+
+    def plot_yield(
+        self,
+        logger: DataLogger
+    ):
+
+        pass
+
+    def plot_all(
+        self,
+        logger: DataLogger
+    ):
+
+        pass
+
+
+
+# ============================================================================
+# PLOTTER (CONTINUED)
+# =============================================================================
+
+    # ===============================================================
+    # COLONIZATION
+    # ===============================================================
+
+    def plot_growth(
+        self,
+        logger: DataLogger
+    ) -> None:
+
+        df = self._prepare_dataframe(logger)
+
+        plt.figure(figsize=(10, 5))
+
+        plt.plot(
+
+            df["Hour"],
+
+            df["Colonization"],
+
+            linewidth=2
+
+        )
+
+        plt.title("Mycelial Colonization")
+
+        plt.xlabel("Hour")
+
+        plt.ylabel("Colonization (%)")
+
+        plt.grid(True)
+
+        plt.tight_layout()
+
+        plt.show()
+
+    # ===============================================================
+    # HEALTH INDEX
+    # ===============================================================
+
+    def plot_health(
+        self,
+        logger: DataLogger
+    ) -> None:
+
+        df = self._prepare_dataframe(logger)
+
+        plt.figure(figsize=(10, 5))
+
+        plt.plot(
+
+            df["Hour"],
+
+            df["HealthIndex"],
+
+            linewidth=2
+
+        )
+
+        plt.title("Health Index")
+
+        plt.xlabel("Hour")
+
+        plt.ylabel("Health Index")
+
+        plt.grid(True)
+
+        plt.tight_layout()
+
+        plt.show()
+
+    # ===============================================================
+    # YIELD
+    # ===============================================================
+
+    def plot_yield(
+        self,
+        logger: DataLogger
+    ) -> None:
+
+        df = self._prepare_dataframe(logger)
+
+        plt.figure(figsize=(10, 5))
+
+        plt.plot(
+
+            df["Hour"],
+
+            df["Yield"],
+
+            linewidth=2
+
+        )
+
+        plt.title("Yield")
+
+        plt.xlabel("Hour")
+
+        plt.ylabel("Yield (g)")
+
+        plt.grid(True)
+
+        plt.tight_layout()
+
+        plt.show()
+
+    # ===============================================================
+    # FRUIT WEIGHT
+    # ===============================================================
+
+    def plot_fruit_weight(
+        self,
+        logger: DataLogger
+    ) -> None:
+
+        df = self._prepare_dataframe(logger)
+
+        plt.figure(figsize=(10, 5))
+
+        plt.plot(
+
+            df["Hour"],
+
+            df["FruitWeight"],
+
+            linewidth=2
+
+        )
+
+        plt.title("Fruit Weight")
+
+        plt.xlabel("Hour")
+
+        plt.ylabel("Weight (g)")
+
+        plt.grid(True)
+
+        plt.tight_layout()
+
+        plt.show()
+
+    # ===============================================================
+    # ALL PLOTS
+    # ===============================================================
+
+    def plot_all(
+        self,
+        logger: DataLogger
+    ) -> None:
+
+        self.plot_temperature(logger)
+
+        self.plot_humidity(logger)
+
+        self.plot_co2(logger)
+
+        self.plot_moisture(logger)
+
+        self.plot_growth(logger)
+
+        self.plot_fruit_weight(logger)
+
+        self.plot_yield(logger)
+
+        self.plot_health(logger)
+
+    # ===============================================================
+    # EXPORT FIGURE
+    # ===============================================================
+
+    def save_plot(
+        self,
+        filename: str
+    ) -> None:
+
+        plt.savefig(
+
+            filename,
+
+            dpi=300,
+
+            bbox_inches="tight"
+
+        )
+
+    # ===============================================================
+    # CLOSE FIGURES
+    # ===============================================================
+
+    def close_all(
+        self
+    ) -> None:
+
+        plt.close("all")
+
+    # ===============================================================
+    # COLONIZATION
+    # ===============================================================
+
+    def plot_growth(
+        self,
+        logger: DataLogger
+    ) -> None:
+
+        df = self._prepare_dataframe(logger)
+
+        plt.figure(figsize=(10, 5))
+
+        plt.plot(
+
+            df["Hour"],
+
+            df["Colonization"],
+
+            linewidth=2
+
+        )
+
+        plt.title("Mycelial Colonization")
+
+        plt.xlabel("Hour")
+
+        plt.ylabel("Colonization (%)")
+
+        plt.grid(True)
+
+        plt.tight_layout()
+
+        plt.show()
+
+    # ===============================================================
+    # HEALTH INDEX
+    # ===============================================================
+
+    def plot_health(
+        self,
+        logger: DataLogger
+    ) -> None:
+
+        df = self._prepare_dataframe(logger)
+
+        plt.figure(figsize=(10, 5))
+
+        plt.plot(
+
+            df["Hour"],
+
+            df["HealthIndex"],
+
+            linewidth=2
+
+        )
+
+        plt.title("Health Index")
+
+        plt.xlabel("Hour")
+
+        plt.ylabel("Health Index")
+
+        plt.grid(True)
+
+        plt.tight_layout()
+
+        plt.show()
+
+    # ===============================================================
+    # YIELD
+    # ===============================================================
+
+    def plot_yield(
+        self,
+        logger: DataLogger
+    ) -> None:
+
+        df = self._prepare_dataframe(logger)
+
+        plt.figure(figsize=(10, 5))
+
+        plt.plot(
+
+            df["Hour"],
+
+            df["Yield"],
+
+            linewidth=2
+
+        )
+
+        plt.title("Yield")
+
+        plt.xlabel("Hour")
+
+        plt.ylabel("Yield (g)")
+
+        plt.grid(True)
+
+        plt.tight_layout()
+
+        plt.show()
+
+    # ===============================================================
+    # FRUIT WEIGHT
+    # ===============================================================
+
+    def plot_fruit_weight(
+        self,
+        logger: DataLogger
+    ) -> None:
+
+        df = self._prepare_dataframe(logger)
+
+        plt.figure(figsize=(10, 5))
+
+        plt.plot(
+
+            df["Hour"],
+
+            df["FruitWeight"],
+
+            linewidth=2
+
+        )
+
+        plt.title("Fruit Weight")
+
+        plt.xlabel("Hour")
+
+        plt.ylabel("Weight (g)")
+
+        plt.grid(True)
+
+        plt.tight_layout()
+
+        plt.show()
+
+    # ===============================================================
+    # ALL PLOTS
+    # ===============================================================
+
+    def plot_all(
+        self,
+        logger: DataLogger
+    ) -> None:
+
+        self.plot_temperature(logger)
+
+        self.plot_humidity(logger)
+
+        self.plot_co2(logger)
+
+        self.plot_moisture(logger)
+
+        self.plot_growth(logger)
+
+        self.plot_fruit_weight(logger)
+
+        self.plot_yield(logger)
+
+        self.plot_health(logger)
+
+    # ===============================================================
+    # EXPORT FIGURE
+    # ===============================================================
+
+    def save_plot(
+        self,
+        filename: str
+    ) -> None:
+
+        plt.savefig(
+
+            filename,
+
+            dpi=300,
+
+            bbox_inches="tight"
+
+        )
+
+    # ===============================================================
+    # CLOSE FIGURES
+    # ===============================================================
+
+    def close_all(
+        self
+    ) -> None:
+
+        plt.close("all")
+
+# =============================================================================
+# DIGITAL TWIN ENGINE
+# =============================================================================
+
+class DigitalTwin:
+    """
+    Scientific Digital Twin Engine
+
+    Integrates
+
+    • Environment Model
+    • Growth Model
+    • Respiration Model
+    • Health Model
+    • Stage Model
+    • Data Logger
+    • Plotter
+    """
+
+    def __init__(self):
+
+        # -------------------------------------------------------------
+        # Core State
+        # -------------------------------------------------------------
+
+        self.state = TwinState()
+
+        # -------------------------------------------------------------
+        # Scientific Models
+        # -------------------------------------------------------------
+
+        self.environment = EnvironmentModel()
+
+        self.growth = GrowthModel()
+
+        self.respiration = RespirationModel()
+
+        self.health = HealthModel()
+
+        self.stage = StageModel()
+
+        # -------------------------------------------------------------
+        # Utilities
+        # -------------------------------------------------------------
+
+        self.logger = DataLogger()
+
+        self.plotter = Plotter()
+
+    # ===============================================================
+    # ONE SIMULATION STEP
+    # ===============================================================
+
+    def step(self) -> None:
+        """
+        Execute one simulation step.
+        """
+
+        # -------------------------------------------------------------
+        # Biological Growth
+        # -------------------------------------------------------------
+
+        self.growth.update(
+
+            self.state
+
+        )
+
+        # -------------------------------------------------------------
+        # Respiration
+        # -------------------------------------------------------------
+
+        self.respiration.update(
+
+            self.state
+
+        )
+
+        # -------------------------------------------------------------
+        # Environment
+        # -------------------------------------------------------------
+
+        self.environment.update(
+
+            self.state
+
+        )
+
+        # -------------------------------------------------------------
+        # Health Assessment
+        # -------------------------------------------------------------
+
+        self.health.update(
+
+            self.state
+
+        )
+
+        # -------------------------------------------------------------
+        # Stage Identification
+        # -------------------------------------------------------------
+
+        self.stage.update(
+
+            self.state
+
+        )
+
+        # -------------------------------------------------------------
+        # Data Logging
+        # -------------------------------------------------------------
+
+        self.logger.log(
+
+            self.state
+
+        )
+
+        # -------------------------------------------------------------
+        # Advance Simulation Time
+        # -------------------------------------------------------------
+
+        self.state.update_time()
+
+    # ===============================================================
+    # MULTIPLE STEPS
+    # ===============================================================
+
+    def simulate(
+        self,
+        hours: int
+    ) -> None:
+        """
+        Run simulation for a specified
+        number of hours.
+        """
+
+        for _ in range(hours):
+
+            self.step()
+
+    # ===============================================================
+    # RESET
+    # ===============================================================
+
+    def reset(self) -> None:
+
+        self.state = TwinState()
+
+        self.logger.clear()
+
+    # ===============================================================
+    # CURRENT STATUS
+    # ===============================================================
+
+    def status(self) -> None:
+
+        print("\n")
+
+        print("=" * 70)
+
+        print("DIGITAL TWIN STATUS")
+
+        print("=" * 70)
+
+        print(
+
+            f"Hour           : {self.state.current_hour}"
+
+        )
+
+        print(
+
+            f"Day            : {self.state.current_day}"
+
+        )
+
+        print(
+
+            f"Stage          : {self.state.current_stage}"
+
+        )
+
+        print(
+
+            f"Temperature    : {self.state.temperature:.2f} °C"
+
+        )
+
+        print(
+
+            f"Humidity       : {self.state.humidity:.2f} %"
+
+        )
+
+        print(
+
+            f"CO₂            : {self.state.co2:.2f} ppm"
+
+        )
+
+        print(
+
+            f"Moisture       : {self.state.moisture:.2f} %"
+
+        )
+
+        print(
+
+            f"Colonization   : {self.state.colonization:.2f} %"
+
+        )
+
+        print(
+
+            f"Fruit Weight   : {self.state.fruit_weight:.2f} g"
+
+        )
+
+        print(
+
+            f"Yield          : {self.state.yield_estimate:.2f} g"
+
+        )
+
+        print(
+
+            f"Health Index   : {self.state.health_index:.2f}"
+
+        )
+
+        print("=" * 70)
+
+    # ===============================================================
+    # PLACEHOLDERS
+    # ===============================================================
+
+    def export_results(
+        self,
+        filename="simulation_results.csv"
+    ):
+
+        pass
+
+    def visualize(self):
+
+        pass
+
+    def validate(self):
+
+        pass
+
+
+    # ===============================================================
+    # EXPORT RESULTS
+    # ===============================================================
+
+    def export_results(
+        self,
+        filename: str = "simulation_results.csv"
+    ) -> None:
+        """
+        Export simulation results to CSV.
+        """
+
+        self.logger.export_csv(
+
+            filename
+
+        )
+
+    # ===============================================================
+    # VISUALIZATION
+    # ===============================================================
+
+    def visualize(self) -> None:
+        """
+        Generate all simulation plots.
+        """
+
+        self.plotter.plot_all(
+
+            self.logger
+
+        )
+
+    # ===============================================================
+    # COMPLETE REPORT
+    # ===============================================================
+
+    def report(self) -> None:
+        """
+        Print complete digital twin report.
+        """
+
+        print("\n")
+
+        print("=" * 70)
+
+        print("SCIENTIFIC DIGITAL TWIN REPORT")
+
+        print("=" * 70)
+
+        self.status()
+
+        self.logger.summary()
+
+        print("=" * 70)
+
+    # ===============================================================
+    # VALIDATION
+    # ===============================================================
+
+    def validate(self) -> bool:
+        """
+        Validate all digital twin models.
+        """
+
+        validation_results = [
+
+            self.environment.validate(
+
+                self.state
+
+            ),
+
+            self.growth.validate(
+
+                self.state
+
+            ),
+
+            self.respiration.validate(
+
+                self.state
+
+            ),
+
+            self.health.validate(
+
+                self.state
+
+            ),
+
+            self.stage.validate(
+
+                self.state
+
+            ),
+
+            self.logger.validate()
+
+        ]
+
+        return all(
+
+            validation_results
+
+        )
+
+    # ===============================================================
+    # RUN COMPLETE SIMULATION
+    # ===============================================================
+
+    def run(
+        self,
+        days: int = Config.SIMULATION_DAYS
+    ) -> None:
+        """
+        Execute complete simulation.
+        """
+
+        total_hours = (
+
+            days *
+
+            Config.HOURS_PER_DAY
+
+        )
+
+        print("\n")
+
+        print("=" * 70)
+
+        print("STARTING DIGITAL TWIN SIMULATION")
+
+        print("=" * 70)
+
+        self.simulate(
+
+            total_hours
+
+        )
+
+        print(
+
+            "\nSimulation Completed Successfully."
+
+        )
+
+        print(
+
+            f"Simulation Time : {days} days"
+
+        )
+
+        print(
+
+            f"Total Steps     : {total_hours}"
+
+        )
+
+        print("=" * 70)
+
+    # ===============================================================
+    # FINAL STATE
+    # ===============================================================
+
+    def final_state(
+        self
+    ) -> TwinState:
+        """
+        Return the final twin state.
+        """
+
+        return self.state
+
+    # ===============================================================
+    # GET DATAFRAME
+    # ===============================================================
+
+    def dataframe(
+        self
+    ) -> pd.DataFrame:
+        """
+        Return simulation results as DataFrame.
+        """
+
+        return self.logger.to_dataframe()
+
+
+# =============================================================================
+# MAIN PROGRAM
+# =============================================================================
+
+def main():
+
+    twin = DigitalTwin()
+
+    twin.run()
+
+    twin.report()
+
+    twin.export_results()
+
+    twin.visualize()
+
+
+if __name__ == "__main__":
+
+    main()
+
+# =============================================================================
+# FINITE STATE MACHINE (FSM) ENGINE
+# =============================================================================
+
+from enum import Enum
+
+
+# =============================================================================
+# ENVIRONMENT STATE
+# =============================================================================
+
+class EnvironmentState(Enum):
+
+    NORMAL = "NORMAL"
+
+    WARNING = "WARNING"
+
+    CRITICAL = "CRITICAL"
+
+    EMERGENCY = "EMERGENCY"
+
+
+# =============================================================================
+# TEMPERATURE STATE
+# =============================================================================
+
+class TemperatureState(Enum):
+
+    LOW = "LOW"
+
+    NORMAL = "NORMAL"
+
+    HIGH = "HIGH"
+
+    CRITICAL = "CRITICAL"
+
+
+# =============================================================================
+# HUMIDITY STATE
+# =============================================================================
+
+class HumidityState(Enum):
+
+    LOW = "LOW"
+
+    NORMAL = "NORMAL"
+
+    HIGH = "HIGH"
+
+    CRITICAL = "CRITICAL"
+
+
+# =============================================================================
+# CO₂ STATE
+# =============================================================================
+
+class CO2State(Enum):
+
+    LOW = "LOW"
+
+    NORMAL = "NORMAL"
+
+    HIGH = "HIGH"
+
+    CRITICAL = "CRITICAL"
+
+
+# =============================================================================
+# MOISTURE STATE
+# =============================================================================
+
+class MoistureState(Enum):
+
+    LOW = "LOW"
+
+    NORMAL = "NORMAL"
+
+    HIGH = "HIGH"
+
+
+# =============================================================================
+# CONTAMINATION STATE
+# =============================================================================
+
+class ContaminationState(Enum):
+
+    SAFE = "SAFE"
+
+    WARNING = "WARNING"
+
+    CONTAMINATED = "CONTAMINATED"
+
+    EMERGENCY = "EMERGENCY"
+
+
+# =============================================================================
+# EQUIPMENT STATE
+# =============================================================================
+
+class EquipmentState(Enum):
+
+    NORMAL = "NORMAL"
+
+    ACTIVE = "ACTIVE"
+
+    FAILURE = "FAILURE"
+
+
+# =============================================================================
+# MASTER FSM
+# =============================================================================
+
+class MasterFSM:
+    """
+    Master Finite State Machine
+
+    Supervises all subsystem FSMs.
+    """
+
+    def __init__(self):
+
+        self.environment_state = EnvironmentState.NORMAL
+
+        self.temperature_state = TemperatureState.NORMAL
+
+        self.humidity_state = HumidityState.NORMAL
+
+        self.co2_state = CO2State.NORMAL
+
+        self.moisture_state = MoistureState.NORMAL
+
+        self.contamination_state = ContaminationState.SAFE
+
+        self.equipment_state = EquipmentState.NORMAL
+
+    # ===============================================================
+    # TEMPERATURE FSM
+    # ===============================================================
+
+    def update_temperature(
+        self,
+        state: TwinState
+    ) -> None:
+
+        if state.temperature < Config.MIN_TEMPERATURE:
+
+            self.temperature_state = TemperatureState.LOW
+
+        elif state.temperature > 33.0:
+
+            self.temperature_state = TemperatureState.CRITICAL
+
+        elif state.temperature > Config.MAX_TEMPERATURE:
+
+            self.temperature_state = TemperatureState.HIGH
+
+        else:
+
+            self.temperature_state = TemperatureState.NORMAL
+
+    # ===============================================================
+    # HUMIDITY FSM
+    # ===============================================================
+
+    def update_humidity(
+        self,
+        state: TwinState
+    ) -> None:
+
+        if state.humidity < Config.MIN_HUMIDITY:
+
+            self.humidity_state = HumidityState.LOW
+
+        elif state.humidity > 95.0:
+
+            self.humidity_state = HumidityState.CRITICAL
+
+        elif state.humidity > Config.MAX_HUMIDITY:
+
+            self.humidity_state = HumidityState.HIGH
+
+        else:
+
+            self.humidity_state = HumidityState.NORMAL
+
+    # ===============================================================
+    # CO₂ FSM
+    # ===============================================================
+
+    def update_co2(
+        self,
+        state: TwinState
+    ) -> None:
+
+        if state.co2 < Config.MIN_CO2:
+
+            self.co2_state = CO2State.LOW
+
+        elif state.co2 > 2000:
+
+            self.co2_state = CO2State.CRITICAL
+
+        elif state.co2 > Config.MAX_CO2:
+
+            self.co2_state = CO2State.HIGH
+
+        else:
+
+            self.co2_state = CO2State.NORMAL
+
+    # ===============================================================
+    # MOISTURE FSM
+    # ===============================================================
+
+    def update_moisture(
+        self,
+        state: TwinState
+    ) -> None:
+
+        if state.moisture < Config.MIN_MOISTURE:
+
+            self.moisture_state = MoistureState.LOW
+
+        elif state.moisture > Config.MAX_MOISTURE:
+
+            self.moisture_state = MoistureState.HIGH
+
+        else:
+
+            self.moisture_state = MoistureState.NORMAL
+
+    # ===============================================================
+    # CONTAMINATION FSM
+    # ===============================================================
+
+    def update_contamination(
+        self,
+        state: TwinState
+    ) -> None:
+
+        contamination = state.contamination_level
+
+        if contamination >= 30:
+
+            self.contamination_state = ContaminationState.EMERGENCY
+
+        elif contamination >= 10:
+
+            self.contamination_state = ContaminationState.CONTAMINATED
+
+        elif contamination > 0:
+
+            self.contamination_state = ContaminationState.WARNING
+
+        else:
+
+            self.contamination_state = ContaminationState.SAFE
+
+    # ===============================================================
+    # PLACEHOLDERS
+    # ===============================================================
+
+    def update_environment(self):
+
+        pass
+
+    def update_equipment(self):
+
+        pass
+
+    def update(self):
+
+        pass
+
+    def status(self):
+
+        pass
+# =============================================================================
+# MASTER FSM (CONTINUED)
+# =============================================================================
+
+    # ===============================================================
+    # ENVIRONMENT FSM
+    # ===============================================================
+
+    def update_environment(
+        self
+    ) -> None:
+        """
+        Determines the overall environmental state
+        from all subsystem FSMs.
+        """
+
+        if (
+
+            self.temperature_state == TemperatureState.CRITICAL
+
+            or
+
+            self.humidity_state == HumidityState.CRITICAL
+
+            or
+
+            self.co2_state == CO2State.CRITICAL
+
+            or
+
+            self.contamination_state == ContaminationState.EMERGENCY
+
+        ):
+
+            self.environment_state = EnvironmentState.EMERGENCY
+
+            return
+
+        if (
+
+            self.temperature_state == TemperatureState.HIGH
+
+            or
+
+            self.humidity_state == HumidityState.HIGH
+
+            or
+
+            self.co2_state == CO2State.HIGH
+
+            or
+
+            self.contamination_state == ContaminationState.CONTAMINATED
+
+        ):
+
+            self.environment_state = EnvironmentState.CRITICAL
+
+            return
+
+        if (
+
+            self.temperature_state == TemperatureState.LOW
+
+            or
+
+            self.humidity_state == HumidityState.LOW
+
+            or
+
+            self.co2_state == CO2State.LOW
+
+            or
+
+            self.moisture_state == MoistureState.LOW
+
+            or
+
+            self.contamination_state == ContaminationState.WARNING
+
+        ):
+
+            self.environment_state = EnvironmentState.WARNING
+
+            return
+
+        self.environment_state = EnvironmentState.NORMAL
+
+    # ===============================================================
+    # EQUIPMENT FSM
+    # ===============================================================
+
+    def update_equipment(
+        self,
+        state: TwinState
+    ) -> None:
+        """
+        Determines whether any actuator is active.
+        """
+
+        active = (
+
+            state.cooling_pad
+
+            or
+
+            state.heater
+
+            or
+
+            state.fogger
+
+            or
+
+            state.sprinkler
+
+            or
+
+            state.exhaust_fan
+
+            or
+
+            state.fresh_air_fan
+
+        )
+
+        if active:
+
+            self.equipment_state = EquipmentState.ACTIVE
+
+        else:
+
+            self.equipment_state = EquipmentState.NORMAL
+
+    # ===============================================================
+    # MASTER UPDATE
+    # ===============================================================
+
+    def update(
+        self,
+        state: TwinState
+    ) -> None:
+        """
+        Executes one complete FSM update.
+        """
+
+        self.update_temperature(
+
+            state
+
+        )
+
+        self.update_humidity(
+
+            state
+
+        )
+
+        self.update_co2(
+
+            state
+
+        )
+
+        self.update_moisture(
+
+            state
+
+        )
+
+        self.update_contamination(
+
+            state
+
+        )
+
+        self.update_environment()
+
+        self.update_equipment(
+
+            state
+
+        )
+
+    # ===============================================================
+    # FSM STATUS
+    # ===============================================================
+
+    def get_status(
+        self
+    ) -> dict:
+        """
+        Returns all FSM states.
+        """
+
+        return {
+
+            "Environment":
+
+                self.environment_state.value,
+
+            "Temperature":
+
+                self.temperature_state.value,
+
+            "Humidity":
+
+                self.humidity_state.value,
+
+            "CO2":
+
+                self.co2_state.value,
+
+            "Moisture":
+
+                self.moisture_state.value,
+
+            "Contamination":
+
+                self.contamination_state.value,
+
+            "Equipment":
+
+                self.equipment_state.value
+
+        }
+
+    # ===============================================================
+    # PRINT STATUS
+    # ===============================================================
+
+    def print_status(
+        self
+    ) -> None:
+
+        print("\n")
+
+        print("=" * 70)
+
+        print("MASTER FSM STATUS")
+
+        print("=" * 70)
+
+        print(
+
+            f"Environment   : {self.environment_state.value}"
+
+        )
+
+        print(
+
+            f"Temperature   : {self.temperature_state.value}"
+
+        )
+
+        print(
+
+            f"Humidity      : {self.humidity_state.value}"
+
+        )
+
+        print(
+
+            f"CO₂           : {self.co2_state.value}"
+
+        )
+
+        print(
+
+            f"Moisture      : {self.moisture_state.value}"
+
+        )
+
+        print(
+
+            f"Contamination : {self.contamination_state.value}"
+
+        )
+
+        print(
+
+            f"Equipment     : {self.equipment_state.value}"
+
+        )
+
+        print("=" * 70)
+
+# =============================================================================
+# ACTUATOR CONTROLLER
+# =============================================================================
+
+class ActuatorController:
+    """
+    Intelligent Actuator Controller
+
+    Executes automatic control actions
+    based on FSM states.
+
+    Controlled Devices
+    ------------------
+    • Cooling Pad
+    • Heater
+    • Fogger
+    • Sprinkler
+    • Exhaust Fan
+    • Fresh Air Fan
+    """
+
+    def __init__(self):
+
+        pass
+
+    # ===============================================================
+    # RESET ALL ACTUATORS
+    # ===============================================================
+
+    def reset(
+        self,
+        state: TwinState
+    ) -> None:
+
+        state.cooling_pad = False
+
+        state.heater = False
+
+        state.fogger = False
+
+        state.sprinkler = False
+
+        state.exhaust_fan = False
+
+        state.fresh_air_fan = False
+
+    # ===============================================================
+    # TEMPERATURE CONTROL
+    # ===============================================================
+
+    def temperature_control(
+        self,
+        state: TwinState,
+        fsm: MasterFSM
+    ) -> None:
+
+        if fsm.temperature_state == TemperatureState.LOW:
+
+            state.heater = True
+
+        elif fsm.temperature_state == TemperatureState.HIGH:
+
+            state.cooling_pad = True
+
+            state.exhaust_fan = True
+
+        elif fsm.temperature_state == TemperatureState.CRITICAL:
+
+            state.cooling_pad = True
+
+            state.exhaust_fan = True
+
+        else:
+
+            state.heater = False
+
+            state.cooling_pad = False
+
+    # ===============================================================
+    # HUMIDITY CONTROL
+    # ===============================================================
+
+    def humidity_control(
+        self,
+        state: TwinState,
+        fsm: MasterFSM
+    ) -> None:
+
+        if fsm.humidity_state == HumidityState.LOW:
+
+            state.fogger = True
+
+        elif fsm.humidity_state == HumidityState.HIGH:
+
+            state.fogger = False
+
+            state.exhaust_fan = True
+
+        elif fsm.humidity_state == HumidityState.CRITICAL:
+
+            state.fogger = False
+
+            state.exhaust_fan = True
+
+            state.cooling_pad = False
+
+        else:
+
+            state.fogger = False
+
+    # ===============================================================
+    # CO₂ CONTROL
+    # ===============================================================
+
+    def co2_control(
+        self,
+        state: TwinState,
+        fsm: MasterFSM
+    ) -> None:
+
+        if fsm.co2_state == CO2State.HIGH:
+
+            state.fresh_air_fan = True
+
+            state.exhaust_fan = True
+
+        elif fsm.co2_state == CO2State.CRITICAL:
+
+            state.fresh_air_fan = True
+
+            state.exhaust_fan = True
+
+        elif fsm.co2_state == CO2State.LOW:
+
+            state.fresh_air_fan = False
+
+        else:
+
+            state.fresh_air_fan = False
+
+    # ===============================================================
+    # MOISTURE CONTROL
+    # ===============================================================
+
+    def moisture_control(
+        self,
+        state: TwinState,
+        fsm: MasterFSM
+    ) -> None:
+
+        if fsm.moisture_state == MoistureState.LOW:
+
+            state.sprinkler = True
+
+        elif fsm.moisture_state == MoistureState.HIGH:
+
+            state.sprinkler = False
+
+            state.exhaust_fan = True
+
+        else:
+
+            state.sprinkler = False
+
+    # ===============================================================
+    # PLACEHOLDERS
+    # ===============================================================
+
+    def contamination_control(
+        self,
+        state: TwinState,
+        fsm: MasterFSM
+    ):
+
+        pass
+
+    def update(
+        self,
+        state: TwinState,
+        fsm: MasterFSM
+    ):
+
+        pass
+
+    def status(
+        self,
+        state: TwinState
+    ):
+
+        pass
+
+
+    # ===============================================================
+    # CONTAMINATION CONTROL
+    # ===============================================================
+
+    def contamination_control(
+        self,
+        state: TwinState,
+        fsm: MasterFSM
+    ) -> None:
+        """
+        Control actions for contamination events.
+        """
+
+        if fsm.contamination_state == ContaminationState.WARNING:
+
+            state.exhaust_fan = True
+
+        elif fsm.contamination_state == ContaminationState.CONTAMINATED:
+
+            state.sprinkler = False
+
+            state.fogger = False
+
+            state.exhaust_fan = True
+
+        elif fsm.contamination_state == ContaminationState.EMERGENCY:
+
+            state.sprinkler = False
+
+            state.fogger = False
+
+            state.cooling_pad = False
+
+            state.exhaust_fan = True
+
+            state.fresh_air_fan = False
+
+    # ===============================================================
+    # MASTER CONTROLLER
+    # ===============================================================
+
+    def update(
+        self,
+        state: TwinState,
+        fsm: MasterFSM
+    ) -> None:
+        """
+        Execute complete actuator control.
+        """
+
+        # ----------------------------------------------------------
+        # Reset Actuators
+        # ----------------------------------------------------------
+
+        self.reset(
+
+            state
+
+        )
+
+        # ----------------------------------------------------------
+        # Environmental Controllers
+        # ----------------------------------------------------------
+
+        self.temperature_control(
+
+            state,
+
+            fsm
+
+        )
+
+        self.humidity_control(
+
+            state,
+
+            fsm
+
+        )
+
+        self.co2_control(
+
+            state,
+
+            fsm
+
+        )
+
+        self.moisture_control(
+
+            state,
+
+            fsm
+
+        )
+
+        self.contamination_control(
+
+            state,
+
+            fsm
+
+        )
+
+    # ===============================================================
+    # CONTROLLER STATUS
+    # ===============================================================
+
+    def get_status(
+        self,
+        state: TwinState
+    ) -> dict:
+        """
+        Returns actuator states.
+        """
+
+        return {
+
+            "Cooling Pad":
+
+                state.cooling_pad,
+
+            "Heater":
+
+                state.heater,
+
+            "Fogger":
+
+                state.fogger,
+
+            "Sprinkler":
+
+                state.sprinkler,
+
+            "Exhaust Fan":
+
+                state.exhaust_fan,
+
+            "Fresh Air Fan":
+
+                state.fresh_air_fan
+
+        }
+
+    # ===============================================================
+    # PRINT STATUS
+    # ===============================================================
+
+    def print_status(
+        self,
+        state: TwinState
+    ) -> None:
+
+        print("\n")
+
+        print("=" * 70)
+
+        print("ACTUATOR STATUS")
+
+        print("=" * 70)
+
+        print(
+
+            f"Cooling Pad    : {state.cooling_pad}"
+
+        )
+
+        print(
+
+            f"Heater         : {state.heater}"
+
+        )
+
+        print(
+
+            f"Fogger         : {state.fogger}"
+
+        )
+
+        print(
+
+            f"Sprinkler      : {state.sprinkler}"
+
+        )
+
+        print(
+
+            f"Exhaust Fan    : {state.exhaust_fan}"
+
+        )
+
+        print(
+
+            f"Fresh Air Fan  : {state.fresh_air_fan}"
+
+        )
+
+        print("=" * 70)
+
+    # ===============================================================
+    # VALIDATION
+    # ===============================================================
+
+    def validate(
+        self,
+        state: TwinState
+    ) -> bool:
+        """
+        Validate actuator variables.
+        """
+
+        actuator_states = [
+
+            state.cooling_pad,
+
+            state.heater,
+
+            state.fogger,
+
+            state.sprinkler,
+
+            state.exhaust_fan,
+
+            state.fresh_air_fan
+
+        ]
+
+        return all(
+
+            isinstance(
+
+                actuator,
+
+                bool
+
+            )
+
+            for actuator in actuator_states
+
+        )
+
+
+# =============================================================================
+# ALERT MANAGER
+# =============================================================================
+
+class AlertManager:
+    """
+    Digital Twin Alert Manager
+
+    Responsible for
+
+    • Warning Generation
+    • Critical Alerts
+    • Emergency Alerts
+    • Alert Logging
+    """
+
+    def __init__(self):
+
+        self.alert_history = []
+
+    # ===============================================================
+    # ADD ALERT
+    # ===============================================================
+
+    def add_alert(
+        self,
+        level: str,
+        message: str
+    ) -> None:
+        """
+        Store a new alert.
+        """
+
+        alert = {
+
+            "Time": datetime.now(),
+
+            "Level": level,
+
+            "Message": message
+
+        }
+
+        self.alert_history.append(
+
+            alert
+
+        )
+
+    # ===============================================================
+    # TEMPERATURE ALERTS
+    # ===============================================================
+
+    def temperature_alert(
+        self,
+        fsm: MasterFSM
+    ) -> None:
+
+        if fsm.temperature_state == TemperatureState.HIGH:
+
+            self.add_alert(
+
+                "WARNING",
+
+                "High chamber temperature."
+
+            )
+
+        elif fsm.temperature_state == TemperatureState.CRITICAL:
+
+            self.add_alert(
+
+                "EMERGENCY",
+
+                "Critical chamber temperature."
+
+            )
+
+    # ===============================================================
+    # HUMIDITY ALERTS
+    # ===============================================================
+
+    def humidity_alert(
+        self,
+        fsm: MasterFSM
+    ) -> None:
+
+        if fsm.humidity_state == HumidityState.LOW:
+
+            self.add_alert(
+
+                "WARNING",
+
+                "Humidity below optimum."
+
+            )
+
+        elif fsm.humidity_state == HumidityState.HIGH:
+
+            self.add_alert(
+
+                "WARNING",
+
+                "Humidity above optimum."
+
+            )
+
+        elif fsm.humidity_state == HumidityState.CRITICAL:
+
+            self.add_alert(
+
+                "EMERGENCY",
+
+                "Critical humidity level."
+
+            )
+
+    # ===============================================================
+    # CO₂ ALERTS
+    # ===============================================================
+
+    def co2_alert(
+        self,
+        fsm: MasterFSM
+    ) -> None:
+
+        if fsm.co2_state == CO2State.HIGH:
+
+            self.add_alert(
+
+                "WARNING",
+
+                "CO₂ concentration is high."
+
+            )
+
+        elif fsm.co2_state == CO2State.CRITICAL:
+
+            self.add_alert(
+
+                "EMERGENCY",
+
+                "Critical CO₂ concentration."
+
+            )
+
+    # ===============================================================
+    # MOISTURE ALERTS
+    # ===============================================================
+
+    def moisture_alert(
+        self,
+        fsm: MasterFSM
+    ) -> None:
+
+        if fsm.moisture_state == MoistureState.LOW:
+
+            self.add_alert(
+
+                "WARNING",
+
+                "Substrate moisture is low."
+
+            )
+
+        elif fsm.moisture_state == MoistureState.HIGH:
+
+            self.add_alert(
+
+                "WARNING",
+
+                "Substrate moisture is high."
+
+            )
+
+    # ===============================================================
+    # PLACEHOLDERS
+    # ===============================================================
+
+    def contamination_alert(
+        self,
+        fsm: MasterFSM
+    ):
+
+        pass
+
+    def update(
+        self,
+        fsm: MasterFSM
+    ):
+
+        pass
+
+    def print_alerts(
+        self
+    ):
+
+        pass
+
+
+# =============================================================================
+# ALERT MANAGER
+# =============================================================================
+
+class AlertManager:
+    """
+    Digital Twin Alert Manager
+
+    Responsible for
+
+    • Warning Generation
+    • Critical Alerts
+    • Emergency Alerts
+    • Alert Logging
+    """
+
+    def __init__(self):
+
+        self.alert_history = []
+
+    # ===============================================================
+    # ADD ALERT
+    # ===============================================================
+
+    def add_alert(
+        self,
+        level: str,
+        message: str
+    ) -> None:
+        """
+        Store a new alert.
+        """
+
+        alert = {
+
+            "Time": datetime.now(),
+
+            "Level": level,
+
+            "Message": message
+
+        }
+
+        self.alert_history.append(
+
+            alert
+
+        )
+
+    # ===============================================================
+    # TEMPERATURE ALERTS
+    # ===============================================================
+
+    def temperature_alert(
+        self,
+        fsm: MasterFSM
+    ) -> None:
+
+        if fsm.temperature_state == TemperatureState.HIGH:
+
+            self.add_alert(
+
+                "WARNING",
+
+                "High chamber temperature."
+
+            )
+
+        elif fsm.temperature_state == TemperatureState.CRITICAL:
+
+            self.add_alert(
+
+                "EMERGENCY",
+
+                "Critical chamber temperature."
+
+            )
+
+    # ===============================================================
+    # HUMIDITY ALERTS
+    # ===============================================================
+
+    def humidity_alert(
+        self,
+        fsm: MasterFSM
+    ) -> None:
+
+        if fsm.humidity_state == HumidityState.LOW:
+
+            self.add_alert(
+
+                "WARNING",
+
+                "Humidity below optimum."
+
+            )
+
+        elif fsm.humidity_state == HumidityState.HIGH:
+
+            self.add_alert(
+
+                "WARNING",
+
+                "Humidity above optimum."
+
+            )
+
+        elif fsm.humidity_state == HumidityState.CRITICAL:
+
+            self.add_alert(
+
+                "EMERGENCY",
+
+                "Critical humidity level."
+
+            )
+
+    # ===============================================================
+    # CO₂ ALERTS
+    # ===============================================================
+
+    def co2_alert(
+        self,
+        fsm: MasterFSM
+    ) -> None:
+
+        if fsm.co2_state == CO2State.HIGH:
+
+            self.add_alert(
+
+                "WARNING",
+
+                "CO₂ concentration is high."
+
+            )
+
+        elif fsm.co2_state == CO2State.CRITICAL:
+
+            self.add_alert(
+
+                "EMERGENCY",
+
+                "Critical CO₂ concentration."
+
+            )
+
+    # ===============================================================
+    # MOISTURE ALERTS
+    # ===============================================================
+
+    def moisture_alert(
+        self,
+        fsm: MasterFSM
+    ) -> None:
+
+        if fsm.moisture_state == MoistureState.LOW:
+
+            self.add_alert(
+
+                "WARNING",
+
+                "Substrate moisture is low."
+
+            )
+
+        elif fsm.moisture_state == MoistureState.HIGH:
+
+            self.add_alert(
+
+                "WARNING",
+
+                "Substrate moisture is high."
+
+            )
+
+    # ===============================================================
+    # PLACEHOLDERS
+    # ===============================================================
+
+    def contamination_alert(
+        self,
+        fsm: MasterFSM
+    ):
+
+        pass
+
+    def update(
+        self,
+        fsm: MasterFSM
+    ):
+
+        pass
+
+    def print_alerts(
+        self
+    ):
+
+        pass
+
+# =============================================================================
+# COMPUTER VISION INTERFACE
+# =============================================================================
+
+class ComputerVisionInterface:
+    """
+    Computer Vision Interface
+
+    Responsible for
+
+    • Image Acquisition
+    • Colonization Estimation
+    • Pinhead Counting
+    • Fruit Counting
+    • Contamination Estimation
+
+    NOTE
+    ----
+    This is the interface layer.
+
+    The actual AI model (YOLO/OpenCV) will be connected later
+    without modifying the Digital Twin.
+    """
+
+    def __init__(self):
+
+        self.camera_connected = False
+
+        self.last_image = None
+
+    # ===============================================================
+    # CAMERA CONNECTION
+    # ===============================================================
+
+    def connect_camera(self) -> None:
+
+        self.camera_connected = True
+
+    def disconnect_camera(self) -> None:
+
+        self.camera_connected = False
+
+    # ===============================================================
+    # IMAGE ACQUISITION
+    # ===============================================================
+
+    def capture_image(self):
+
+        """
+        Placeholder for future camera capture.
+        """
+
+        return self.last_image
+
+    # ===============================================================
+    # COLONIZATION ESTIMATION
+    # ===============================================================
+
+    def estimate_colonization(
+        self,
+        image
+    ) -> float:
+
+        """
+        Placeholder AI prediction.
+        """
+
+        return 0.0
+
+    # ===============================================================
+    # PINHEAD DETECTION
+    # ===============================================================
+
+    def detect_pinheads(
+        self,
+        image
+    ) -> int:
+
+        """
+        Placeholder AI prediction.
+        """
+
+        return 0
+
+    # ===============================================================
+    # FRUIT DETECTION
+    # ===============================================================
+
+    def detect_fruits(
+        self,
+        image
+    ) -> int:
+
+        """
+        Placeholder AI prediction.
+        """
+
+        return 0
+
+    # ===============================================================
+    # CONTAMINATION ESTIMATION
+    # ===============================================================
+
+    def estimate_contamination(
+        self,
+        image
+    ) -> float:
+
+        """
+        Placeholder AI prediction.
+        """
+
+        return 0.0
+
+    # ===============================================================
+    # UPDATE DIGITAL TWIN
+    # ===============================================================
+
+    def update_state(
+        self,
+        state: TwinState
+    ) -> None:
+
+        image = self.capture_image()
+
+        if image is None:
+
+            return
+
+        state.colonization_percentage = (
+
+            self.estimate_colonization(
+
+                image
+
+            )
+
+        )
+
+        state.pinhead_count = (
+
+            self.detect_pinheads(
+
+                image
+
+            )
+
+        )
+
+        state.fruit_count = (
+
+            self.detect_fruits(
+
+                image
+
+            )
+
+        )
+
+        state.contamination_level = (
+
+            self.estimate_contamination(
+
+                image
+
+            )
+
+        )
+
+    # ===============================================================
+    # STATUS
+    # ===============================================================
+
+    def status(self):
+
+        return {
+
+            "Camera Connected":
+
+                self.camera_connected
+
+        }
+
+
+class ComputerVisionInterface:
+    """
+    Computer Vision Interface
+
+    Responsible for
+
+    • Image Acquisition
+    • Colonization Estimation
+    • Pinhead Counting
+    • Fruit Counting
+    • Contamination Estimation
+
+    NOTE
+    ----
+    This is the interface layer.
+
+    The actual AI model (YOLO/OpenCV) will be connected later
+    without modifying the Digital Twin.
+    """
+
+    def __init__(self):
+
+        self.camera_connected = False
+
+        self.last_image = None
+
+    # ===============================================================
+    # CAMERA CONNECTION
+    # ===============================================================
+
+    def connect_camera(self) -> None:
+
+        self.camera_connected = True
+
+    def disconnect_camera(self) -> None:
+
+        self.camera_connected = False
+
+    # ===============================================================
+    # IMAGE ACQUISITION
+    # ===============================================================
+
+    def capture_image(self):
+
+        """
+        Placeholder for future camera capture.
+        """
+
+        return self.last_image
+
+    # ===============================================================
+    # COLONIZATION ESTIMATION
+    # ===============================================================
+
+    def estimate_colonization(
+        self,
+        image
+    ) -> float:
+
+        """
+        Placeholder AI prediction.
+        """
+
+        return 0.0
+
+    # ===============================================================
+    # PINHEAD DETECTION
+    # ===============================================================
+
+    def detect_pinheads(
+        self,
+        image
+    ) -> int:
+
+        """
+        Placeholder AI prediction.
+        """
+
+        return 0
+
+    # ===============================================================
+    # FRUIT DETECTION
+    # ===============================================================
+
+    def detect_fruits(
+        self,
+        image
+    ) -> int:
+
+        """
+        Placeholder AI prediction.
+        """
+
+        return 0
+
+    # ===============================================================
+    # CONTAMINATION ESTIMATION
+    # ===============================================================
+
+    def estimate_contamination(
+        self,
+        image
+    ) -> float:
+
+        """
+        Placeholder AI prediction.
+        """
+
+        return 0.0
+
+    # ===============================================================
+    # UPDATE DIGITAL TWIN
+    # ===============================================================
+
+    def update_state(
+        self,
+        state: TwinState
+    ) -> None:
+
+        image = self.capture_image()
+
+        if image is None:
+
+            return
+
+        state.colonization_percentage = (
+
+            self.estimate_colonization(
+
+                image
+
+            )
+
+        )
+
+        state.pinhead_count = (
+
+            self.detect_pinheads(
+
+                image
+
+            )
+
+        )
+
+        state.fruit_count = (
+
+            self.detect_fruits(
+
+                image
+
+            )
+
+        )
+
+        state.contamination_level = (
+
+            self.estimate_contamination(
+
+                image
+
+            )
+
+        )
+
+    # ===============================================================
+    # STATUS
+    # ===============================================================
+
+    def status(self):
+
+        return {
+
+            "Camera Connected":
+
+                self.camera_connected
+
+        }
+
+
+# =============================================================================
+# ESP32 COMMUNICATION INTERFACE
+# =============================================================================
+
+import json
+
+
+class ESP32Interface:
+    """
+    ESP32 Communication Interface
+
+    Responsibilities
+    ----------------
+    • Receive Sensor Data
+    • Send Actuator Commands
+    • Synchronize Digital Twin
+    • Communication Diagnostics
+
+    """
+
+    def __init__(self):
+
+        self.connected = False
+
+        self.ip_address = None
+
+        self.last_received = {}
+
+        self.last_command = {}
+
+    # ===============================================================
+    # CONNECTION
+    # ===============================================================
+
+    def connect(
+        self,
+        ip_address: str
+    ) -> None:
+
+        self.connected = True
+
+        self.ip_address = ip_address
+
+    def disconnect(
+        self
+    ) -> None:
+
+        self.connected = False
+
+        self.ip_address = None
+
+    # ===============================================================
+    # SENSOR DATA
+    # ===============================================================
+
+    def receive_sensor_data(
+        self
+    ) -> dict:
+        """
+        Placeholder for real ESP32 sensor packet.
+        """
+
+        return self.last_received
+
+    # ===============================================================
+    # DIGITAL TWIN UPDATE
+    # ===============================================================
+
+    def update_twin(
+        self,
+        state: TwinState
+    ) -> None:
+        """
+        Update TwinState using received sensor data.
+        """
+
+        data = self.receive_sensor_data()
+
+        if len(data) == 0:
+
+            return
+
+        state.temperature = data.get(
+
+            "temperature",
+
+            state.temperature
+
+        )
+
+        state.humidity = data.get(
+
+            "humidity",
+
+            state.humidity
+
+        )
+
+        state.co2 = data.get(
+
+            "co2",
+
+            state.co2
+
+        )
+
+        state.moisture = data.get(
+
+            "moisture",
+
+            state.moisture
+
+        )
+
+    # ===============================================================
+    # CREATE COMMAND PACKET
+    # ===============================================================
+
+    def actuator_packet(
+        self,
+        state: TwinState
+    ) -> dict:
+
+        packet = {
+
+            "cooling_pad":
+
+                state.cooling_pad,
+
+            "heater":
+
+                state.heater,
+
+            "fogger":
+
+                state.fogger,
+
+            "sprinkler":
+
+                state.sprinkler,
+
+            "exhaust_fan":
+
+                state.exhaust_fan,
+
+            "fresh_air_fan":
+
+                state.fresh_air_fan
+
+        }
+
+        self.last_command = packet
+
+        return packet
+
+    # ===============================================================
+    # SEND COMMANDS
+    # ===============================================================
+
+    def send_commands(
+        self,
+        state: TwinState
+    ) -> None:
+        """
+        Placeholder for WiFi/MQTT communication.
+        """
+
+        packet = self.actuator_packet(
+
+            state
+
+        )
+
+        print(
+
+            json.dumps(
+
+                packet,
+
+                indent=4
+
+            )
+
+        )
+
+    # ===============================================================
+    # PLACEHOLDERS
+    # ===============================================================
+
+    def health_check(self):
+
+        pass
+
+    def validate(self):
+
+        pass
+
+    def status(self):
+
+        pass
+
+# =============================================================================
+# ESP32 COMMUNICATION INTERFACE (CONTINUED)
+# =============================================================================
+
+    # ===============================================================
+    # CONNECTION HEALTH
+    # ===============================================================
+
+    def health_check(
+        self
+    ) -> bool:
+        """
+        Check communication status.
+        """
+
+        return self.connected
+
+    # ===============================================================
+    # CONNECTION STATUS
+    # ===============================================================
+
+    def status(
+        self
+    ) -> dict:
+        """
+        Return communication status.
+        """
+
+        return {
+
+            "Connected":
+
+                self.connected,
+
+            "IP Address":
+
+                self.ip_address,
+
+            "Last Sensor Packet":
+
+                self.last_received,
+
+            "Last Command Packet":
+
+                self.last_command
+
+        }
+
+    # ===============================================================
+    # VALIDATION
+    # ===============================================================
+
+    def validate(
+        self
+    ) -> bool:
+        """
+        Validate communication interface.
+        """
+
+        if not isinstance(
+
+            self.connected,
+
+            bool
+
+        ):
+
+            return False
+
+        if not isinstance(
+
+            self.last_received,
+
+            dict
+
+        ):
+
+            return False
+
+        if not isinstance(
+
+            self.last_command,
+
+            dict
+
+        ):
+
+            return False
+
+        return True
+
+    # ===============================================================
+    # RESET
+    # ===============================================================
+
+    def reset(
+        self
+    ) -> None:
+
+        self.connected = False
+
+        self.ip_address = None
+
+        self.last_received = {}
+
+        self.last_command = {}
+
+    # ===============================================================
+    # PRINT STATUS
+    # ===============================================================
+
+    def print_status(
+        self
+    ) -> None:
+
+        print("\n")
+
+        print("=" * 70)
+
+        print("ESP32 COMMUNICATION STATUS")
+
+        print("=" * 70)
+
+        print(
+
+            f"Connected : {self.connected}"
+
+        )
+
+        print(
+
+            f"IP Address : {self.ip_address}"
+
+        )
+
+        print(
+
+            f"Last Sensor Packet : "
+
+            f"{self.last_received}"
+
+        )
+
+        print(
+
+            f"Last Command Packet : "
+
+            f"{self.last_command}"
+
+        )
+
+        print("=" * 70)
+
+# =============================================================================
+# DASHBOARD INTERFACE
+# =============================================================================
+
+class DashboardInterface:
+    """
+    Dashboard Interface
+
+    Responsible for
+
+    • Collecting Digital Twin Data
+    • Preparing Dashboard Data
+    • Displaying Current Status
+    • Displaying Alerts
+
+   
+    def __init__(self):
+
+        self.dashboard_data = {}
+
+    # ===============================================================
+    # UPDATE DASHBOARD
+    # ===============================================================
+
+    def update(
+        self,
+        state: TwinState
+    ) -> None:
+
+        self.dashboard_data = {
+
+            "Current Day":
+
+                state.current_day,
+
+            "Current Hour":
+
+                state.current_hour,
+
+            "Stage":
+
+                state.current_stage,
+
+            "Temperature":
+
+                state.temperature,
+
+            "Humidity":
+
+                state.humidity,
+
+            "CO2":
+
+                state.co2,
+
+            "Moisture":
+
+                state.moisture,
+
+            "Colonization":
+
+                state.colonization,
+
+            "Fruit Weight":
+
+                state.fruit_weight,
+
+            "Yield":
+
+                state.yield_estimate,
+
+            "Health Index":
+
+                state.health_index,
+
+            "Contamination":
+
+                state.contamination_level
+
+        }
+
+    # ===============================================================
+    # GET DASHBOARD DATA
+    # ===============================================================
+
+    def get_dashboard_data(
+        self
+    ) -> dict:
+
+        return self.dashboard_data
+
+    # ===============================================================
+    # PRINT DASHBOARD
+    # ===============================================================
+
+    def display(
+        self
+    ) -> None:
+
+        print("\n")
+
+        print("=" * 70)
+
+        print("DIGITAL TWIN DASHBOARD")
+
+        print("=" * 70)
+
+        for key, value in self.dashboard_data.items():
+
+            print(f"{key:<20}: {value}")
+
+        print("=" * 70)
+
+    # ===============================================================
+    # ENVIRONMENT CARD
+    # ===============================================================
+
+    def environment_card(
+        self,
+        state: TwinState
+    ) -> dict:
+
+        return {
+
+            "Temperature":
+
+                state.temperature,
+
+            "Humidity":
+
+                state.humidity,
+
+            "CO2":
+
+                state.co2,
+
+            "Moisture":
+
+                state.moisture
+
+        }
+
+    # ===============================================================
+    # GROWTH CARD
+    # ===============================================================
+
+    def growth_card(
+        self,
+        state: TwinState
+    ) -> dict:
+
+        return {
+
+            "Stage":
+
+                state.current_stage,
+
+            "Colonization":
+
+                state.colonization,
+
+            "Fruit Weight":
+
+                state.fruit_weight,
+
+            "Yield":
+
+                state.yield_estimate
+
+        }
+
+    # ===============================================================
+    # HEALTH CARD
+    # ===============================================================
+
+    def health_card(
+        self,
+        state: TwinState
+    ) -> dict:
+
+        return {
+
+            "Health Index":
+
+                state.health_index,
+
+            "Contamination":
+
+                state.contamination_level
+
+        }
+
+    # ===============================================================
+    # PLACEHOLDERS
+    # ===============================================================
+
+    def export_json(
+        self,
+        filename="dashboard.json"
+    ):
+
+        pass
+
+    def validate(
+        self
+    ):
+
+        pass
+
+
+    # ===============================================================
+    # EXPORT DASHBOARD DATA
+    # ===============================================================
+
+    def export_json(
+        self,
+        filename: str = "dashboard.json"
+    ) -> None:
+        """
+        Export dashboard data to JSON.
+        """
+
+        with open(
+
+            filename,
+
+            "w",
+
+            encoding="utf-8"
+
+        ) as file:
+
+            json.dump(
+
+                self.dashboard_data,
+
+                file,
+
+                indent=4,
+
+                default=str
+
+            )
+
+    # ===============================================================
+    # RESET DASHBOARD
+    # ===============================================================
+
+    def reset(
+        self
+    ) -> None:
+        """
+        Reset dashboard contents.
+        """
+
+        self.dashboard_data = {}
+
+    # ===============================================================
+    # VALIDATION
+    # ===============================================================
+
+    def validate(
+        self
+    ) -> bool:
+        """
+        Validate dashboard data.
+        """
+
+        return isinstance(
+
+            self.dashboard_data,
+
+            dict
+
+        )
+
+    # ===============================================================
+    # SUMMARY
+    # ===============================================================
+
+    def summary(
+        self
+    ) -> None:
+        """
+        Display dashboard summary.
+        """
+
+        print("\n")
+
+        print("=" * 70)
+
+        print("DASHBOARD SUMMARY")
+
+        print("=" * 70)
+
+        print(
+
+            f"Available Parameters : "
+
+            f"{len(self.dashboard_data)}"
+
+        )
+
+        print("=" * 70)
+
+    # ===============================================================
+    # STATUS
+    # ===============================================================
+
+    def status(
+        self
+    ) -> dict:
+        """
+        Return dashboard status.
+        """
+
+        return {
+
+            "Dashboard Ready":
+
+                True,
+
+            "Parameters":
+
+                len(
+
+                    self.dashboard_data
+
+                )
+
+        }
+
+
+
+
+# =============================================================================
+# FINAL SYSTEM INTEGRATION
+# =============================================================================
+
+class IntelligentDigitalTwin(DigitalTwin):
+    """
+    Complete Scientific Digital Twin
+
+    Integrated Modules
+
+    • Environment Model
+    • Growth Model
+    • Respiration Model
+    • Health Model
+    • Stage Model
+    • Master FSM
+    • Actuator Controller
+    • Alert Manager
+    • Computer Vision Interface
+    • ESP32 Interface
+    • Dashboard Interface
+    • Data Logger
+    """
+
+    def __init__(self):
+
+        super().__init__()
+
+        # ------------------------------------------------------------
+        # Intelligence Layer
+        # ------------------------------------------------------------
+
+        self.fsm = MasterFSM()
+
+        self.controller = ActuatorController()
+
+        self.alerts = AlertManager()
+
+        # ------------------------------------------------------------
+        # Interfaces
+        # ------------------------------------------------------------
+
+        self.vision = ComputerVisionInterface()
+
+        self.esp32 = ESP32Interface()
+
+        self.dashboard = DashboardInterface()
+
+    # ===============================================================
+    # COMPLETE DIGITAL TWIN CYCLE
+    # ===============================================================
+
+    def step(self) -> None:
+        """
+        Executes one complete Digital Twin cycle.
+        """
+
+        # ------------------------------------------------------------
+        # Read Physical Sensors
+        # ------------------------------------------------------------
+
+        self.esp32.update_twin(
+
+            self.state
+
+        )
+
+        # ------------------------------------------------------------
+        # Computer Vision
+        # ------------------------------------------------------------
+
+        self.vision.update_state(
+
+            self.state
+
+        )
+
+        # ------------------------------------------------------------
+        # Scientific Models
+        # ------------------------------------------------------------
+
+        self.growth.update(
+
+            self.state
+
+        )
+
+        self.respiration.update(
+
+            self.state
+
+        )
+
+        self.environment.update(
+
+            self.state
+
+        )
+
+        self.health.update(
+
+            self.state
+
+        )
+
+        self.stage.update(
+
+            self.state
+
+        )
+
+        # ------------------------------------------------------------
+        # FSM Decision Layer
+        # ------------------------------------------------------------
+
+        self.fsm.update(
+
+            self.state
+
+        )
+
+        # ------------------------------------------------------------
+        # Intelligent Controller
+        # ------------------------------------------------------------
+
+        self.controller.update(
+
+            self.state,
+
+            self.fsm
+
+        )
+
+        # ------------------------------------------------------------
+        # Alerts
+        # ------------------------------------------------------------
+
+        self.alerts.update(
+
+            self.fsm
+
+        )
+
+        # ------------------------------------------------------------
+        # Dashboard
+        # ------------------------------------------------------------
+
+        self.dashboard.update(
+
+            self.state
+
+        )
+
+        # ------------------------------------------------------------
+        # Data Logger
+        # ------------------------------------------------------------
+
+        self.logger.log(
+
+            self.state
+
+        )
+
+        # ------------------------------------------------------------
+        # Advance Time
+        # ------------------------------------------------------------
+
+        self.state.update_time()
+
+    # ===============================================================
+    # RUN COMPLETE SYSTEM
+    # ===============================================================
+
+    def run_system(
+        self,
+        days: int = Config.SIMULATION_DAYS
+    ) -> None:
+
+        total_steps = (
+
+            days *
+
+            Config.HOURS_PER_DAY
+
+        )
+
+        print("\n")
+
+        print("=" * 80)
+
+        print("SCIENTIFIC DIGITAL TWIN INITIALIZED")
+
+        print("=" * 80)
+
+        print(f"Simulation Duration : {days} Days")
+
+        print(f"Total Steps         : {total_steps}")
+
+        print("=" * 80)
+
+        for _ in range(total_steps):
+
+            self.step()
+
+        print("\nSimulation Completed Successfully.")
+
+    # ===============================================================
+    # COMPLETE SYSTEM REPORT
+    # ===============================================================
+
+    def complete_report(
+        self
+    ) -> None:
+
+        self.status()
+
+        self.fsm.print_status()
+
+        self.controller.print_status(
+
+            self.state
+
+        )
+
+        self.health.print_status(
+
+            self.state
+
+        )
+
+        self.stage.print_status(
+
+            self.state
+
+        )
+
+        self.logger.summary()
+
+        self.alerts.print_alerts()
+
+        self.dashboard.summary()
+
+    # ===============================================================
+    # EXPORT EVERYTHING
+    # ===============================================================
+
+    def export_all(
+        self
+    ) -> None:
+
+        self.export_results(
+
+            "simulation_results.csv"
+
+        )
+
+        self.dashboard.export_json(
+
+            "dashboard.json"
+
+        )
+
+    # ===============================================================
+    # VALIDATE COMPLETE SYSTEM
+    # ===============================================================
+
+    def validate_system(
+        self
+    ) -> bool:
+
+        return all([
+
+            self.environment.validate(
+
+                self.state
+
+            ),
+
+            self.growth.validate(
+
+                self.state
+
+            ),
+
+            self.respiration.validate(
+
+                self.state
+
+            ),
+
+            self.health.validate(
+
+                self.state
+
+            ),
+
+            self.stage.validate(
+
+                self.state
+
+            ),
+
+            self.logger.validate(),
+
+            self.fsm is not None,
+
+            self.controller.validate(
+
+                self.state
+
+            ),
+
+            self.alerts.validate(),
+
+            self.vision.validate(),
+
+            self.esp32.validate(),
+
+            self.dashboard.validate()
+
+        ])
+
+
+# =============================================================================
+# MAIN PROGRAM
+# =============================================================================
+
+def main():
+
+    twin = IntelligentDigitalTwin()
+
+    if twin.validate_system():
+
+        twin.run_system()
+
+        twin.complete_report()
+
+        twin.export_all()
+
+        twin.visualize()
+
+    else:
+
+        print("\nSystem Validation Failed.")
+
+
+if __name__ == "__main__":
+
+    main()
+
+
+
