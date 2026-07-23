@@ -128,3 +128,25 @@ class Config:
     SPRINKLER = False
     EXHAUST_FAN = False
     FRESH_AIR_FAN = False
+
+    # ------------------------------------------------------------------
+    # Computer Vision Heuristics (classical OpenCV, no training data)
+    # ------------------------------------------------------------------
+    MYCELIUM_HSV_LOWER = (0, 0, 150)       # white/cream mycelium
+    MYCELIUM_HSV_UPPER = (180, 60, 255)
+    MOLD_HSV_LOWER = (35, 60, 40)          # green/black contaminant colors
+    MOLD_HSV_UPPER = (90, 255, 200)
+    PINHEAD_BLOB_AREA = (20, 150)          # px^2 range for a pinhead-sized blob
+    FRUIT_BLOB_AREA = (150, 100000)        # px^2 range for a mature-fruit-sized blob
+
+    # ------------------------------------------------------------------
+    # MQTT (ESP32 control unit)
+    # ------------------------------------------------------------------
+    MQTT_BROKER_HOST = "localhost"
+    MQTT_BROKER_PORT = 1883
+    MQTT_CLIENT_ID = "mushroom-twin"
+    MQTT_KEEPALIVE = 60
+    MQTT_QOS = 1
+    MQTT_TOPIC_SENSORS = "mushroom/sensors"
+    MQTT_TOPIC_ACTUATORS = "mushroom/actuators"
+    MQTT_TOPIC_STATUS = "mushroom/status"

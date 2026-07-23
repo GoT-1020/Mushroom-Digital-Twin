@@ -2,8 +2,8 @@
 
 A **Scientific Digital Twin for Oyster Mushroom (Pleurotus) Cultivation** — a
 physics + biology simulation of a controlled-environment cultivation chamber,
-with a control/decision layer (FSMs, actuator controller, alerts) and interface
-stubs for hardware (ESP32/MQTT), computer vision, and a dashboard.
+with a control/decision layer (FSMs, actuator controller, alerts) and interfaces
+for hardware (ESP32 over MQTT), computer vision, and a dashboard.
 
 This is a clean, runnable Python package refactored from the original
 single-file framework (`Mushroom_Digital_Twin_Code_Framework.txt`, v2.0 by
@@ -20,6 +20,53 @@ python3 main.py
 # Run headless (no matplotlib windows) for a chosen number of days
 python3 main.py 10 --no-plot
 ```
+
+## From a photo
+
+Analyze a photo of the substrate/fruiting body, anchor the twin's state to what's observed,
+and project growth forward from there:
+
+```bash
+python3 main.py --image path/to/photo.jpg --project-days 14
+
+# or capture one frame from a webcam instead of a file
+python3 main.py --camera --project-days 14
+```
+
+This prints an analysis block (colonization/contamination/pinhead/fruit estimates), then runs
+the same report/CSV/JSON/plot pipeline as a normal simulation, starting from the observed state
+instead of `Config.INITIAL_COLONIZATION`.
+
+## Connecting a real ESP32
+
+`interfaces/esp32.py` talks to the physical chamber controller over MQTT (via `paho-mqtt`). It
+subscribes to sensor readings and publishes actuator commands — connect it before running a
+simulation and the twin's `step()` loop reads real sensors and drives real hardware instead of
+just the internal physics model:
+
+```python
+from mushroom_twin import IntelligentDigitalTwin
+
+twin = IntelligentDigitalTwin()
+twin.esp32.connect(host="192.168.1.50")   # your Mosquitto (or other) broker
+twin.run_system(days=30)                  # now reads real sensors, sends real actuator commands
+twin.esp32.disconnect()
+```
+
+Until `connect()` is called, both the sensor-read and actuator-send sides are no-ops, so plain
+`python3 main.py` runs are pure simulation, unaffected by any of this.
+
+Default settings (`Config.MQTT_*`) assume an unauthenticated local broker on `localhost:1883`;
+`connect()` also accepts `port`, `username`, `password`, and `use_tls` for a secured/cloud broker.
+
+**Message schema** — this is the contract the ESP32 firmware (Arduino/MicroPython, not part of
+this repo) needs to implement:
+
+| Topic                  | Direction      | Payload (JSON)                                                                                          |
+| ----------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `mushroom/sensors`      | ESP32 → twin   | `{"temperature": 28.4, "humidity": 84.2, "co2": 1020, "moisture": 71.5}`                                                |
+| `mushroom/actuators`    | twin → ESP32   | `{"cooling_pad": false, "heater": false, "fogger": true, "sprinkler": false, "exhaust_fan": true, "fresh_air_fan": false}` (retained) |
+| `mushroom/status`       | twin → broker  | `"online"` on connect; broker publishes `"offline"` (LWT) if the twin process drops                                    |
 
 Running `main.py` prints a full report and writes two output files:
 
@@ -41,8 +88,8 @@ mushroom_twin/
   fsm.py               State enums + MasterFSM
   control.py           ActuatorController, AlertManager
   interfaces/
-    vision.py          ComputerVisionInterface (stub for YOLOv8/OpenCV)
-    esp32.py           ESP32Interface          (stub for WiFi/MQTT)
+    vision.py          ComputerVisionInterface (classical OpenCV heuristics)
+    esp32.py           ESP32Interface          (MQTT transport, via paho-mqtt)
     dashboard.py       DashboardInterface
   data_logger.py       DataLogger (pandas/CSV)
   plotting.py          Plotter (matplotlib)
@@ -100,7 +147,19 @@ no model coefficients were changed):
 
 ## Not yet implemented (future work)
 
-Real computer vision (YOLOv8), real ESP32/MQTT I/O, a FastAPI backend, a React
-dashboard, database persistence, and calibration of the model coefficients —
-all described in the design docs (`../System Architecture Plan.docx`,
-`../Software Design Specification (SDS).docx`, `../Implimentation.docx`).
+A FastAPI backend, a React dashboard, database persistence, and calibration of
+the model coefficients — all described in the design docs (`../System
+Architecture Plan.docx`, `../Software Design Specification (SDS).docx`,
+`../Implimentation.docx`).
+
+ESP32 connectivity (`interfaces/esp32.py`) is real MQTT (see "Connecting a real
+ESP32" above), but the ESP32 *firmware* itself (Arduino/MicroPython, publishing
+sensor readings and consuming actuator commands per the schema above) is not
+part of this repo.
+
+Computer vision (`interfaces/vision.py`) uses classical OpenCV color/contour
+heuristics (HSV thresholding for mycelium/mold color, blob counting for
+pinheads/fruits) tuned via `Config`, not a trained model — there's no labeled
+mushroom-image dataset in this repo to train one. Swapping in a trained model
+(e.g. YOLOv8) later is a drop-in change to `ComputerVisionInterface.analyze()`;
+nothing else in the twin needs to change.

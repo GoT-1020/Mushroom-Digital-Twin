@@ -1,3 +1,5 @@
 numpy
 pandas
 matplotlib
+opencv-python
+paho-mqtt

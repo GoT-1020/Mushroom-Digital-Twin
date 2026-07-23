@@ -163,6 +163,10 @@ class IntelligentDigitalTwin(DigitalTwin):
         # Intelligent controller
         self.controller.update(self.state, self.fsm)
 
+        # Push actuator commands to hardware (no-op unless esp32.connect() was
+        # called, so pure-simulation runs are unaffected)
+        self.esp32.send_commands(self.state)
+
         # Alerts
         self.alerts.update(self.fsm)
 
@@ -174,6 +178,45 @@ class IntelligentDigitalTwin(DigitalTwin):
 
         # Advance time
         self.state.update_time()
+
+    def observe(self, image_path: str = None, camera_source: int = None) -> dict:
+        """Analyze one photo/camera frame and anchor the twin's state to it.
+
+        Unlike the per-step `vision.update_state()` no-op (which only matters for a
+        live-deployed camera), this anchors the fields the growth model actually reads
+        (`state.colonization`, not just the unused `colonization_percentage` mirror) so a
+        single observation can drive a real forward projection.
+        """
+        if image_path is not None:
+            image = self.vision.load_image(image_path)
+        else:
+            image = self.vision.capture_image(camera_source if camera_source is not None else 0)
+
+        if image is None:
+            raise ValueError("No image available: pass image_path or ensure a camera is connected.")
+
+        analysis = self.vision.analyze(image)
+
+        self.state.colonization = analysis["colonization"]
+        self.state.colonization_percentage = analysis["colonization"]
+        self.state.contamination_level = analysis["contamination"]
+        self.state.pinhead_count = analysis["pinheads"]
+        self.state.fruit_count = analysis["fruits"]
+
+        self.stage.update(self.state)
+
+        return analysis
+
+    def observe_and_project(
+        self,
+        image_path: str = None,
+        camera_source: int = None,
+        days: int = Config.SIMULATION_DAYS,
+    ) -> dict:
+        """Analyze one photo/camera frame, anchor state to it, then simulate `days` forward."""
+        analysis = self.observe(image_path=image_path, camera_source=camera_source)
+        self.run_system(days=days)
+        return analysis
 
     def run_system(self, days: int = Config.SIMULATION_DAYS) -> None:
         total_steps = days * Config.HOURS_PER_DAY
