@@ -48,6 +48,15 @@ class Config:
     MIN_MOISTURE = 60.0
     MAX_MOISTURE = 80.0
 
+    # Hysteresis margins: once triggered by a LOW reading, the fogger/sprinkler
+    # stay on until the reading recovers this far past the threshold, instead
+    # of switching off the instant it ticks back above MIN_*. Without this,
+    # the actuator flips off after a single step, the value drains back below
+    # threshold within a couple of hours, and the FSM re-triggers it, alert
+    # and all, over and over.
+    HUMIDITY_HYSTERESIS = 5.0
+    MOISTURE_HYSTERESIS = 5.0
+
     # ------------------------------------------------------------------
     # Environment Model Coefficients
     # ------------------------------------------------------------------

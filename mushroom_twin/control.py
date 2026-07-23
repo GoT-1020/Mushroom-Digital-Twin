@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+from .config import Config
 from .fsm import (
     CO2State,
     ContaminationState,
@@ -41,7 +42,9 @@ class ActuatorController:
             state.heater = False
             state.cooling_pad = False
 
-    def humidity_control(self, state: TwinState, fsm: MasterFSM) -> None:
+    def humidity_control(
+        self, state: TwinState, fsm: MasterFSM, previous_fogger: bool = False
+    ) -> None:
         if fsm.humidity_state == HumidityState.LOW:
             state.fogger = True
         elif fsm.humidity_state == HumidityState.HIGH:
@@ -51,6 +54,13 @@ class ActuatorController:
             state.fogger = False
             state.exhaust_fan = True
             state.cooling_pad = False
+        elif (
+            previous_fogger
+            and state.humidity < Config.MIN_HUMIDITY + Config.HUMIDITY_HYSTERESIS
+        ):
+            # Still recovering: hold the fogger on past the raw threshold so
+            # it doesn't chatter on/off every step.
+            state.fogger = True
         else:
             state.fogger = False
 
@@ -66,12 +76,21 @@ class ActuatorController:
         else:
             state.fresh_air_fan = False
 
-    def moisture_control(self, state: TwinState, fsm: MasterFSM) -> None:
+    def moisture_control(
+        self, state: TwinState, fsm: MasterFSM, previous_sprinkler: bool = False
+    ) -> None:
         if fsm.moisture_state == MoistureState.LOW:
             state.sprinkler = True
         elif fsm.moisture_state == MoistureState.HIGH:
             state.sprinkler = False
             state.exhaust_fan = True
+        elif (
+            previous_sprinkler
+            and state.moisture < Config.MIN_MOISTURE + Config.MOISTURE_HYSTERESIS
+        ):
+            # Still recovering: hold the sprinkler on past the raw threshold
+            # so it doesn't chatter on/off every step.
+            state.sprinkler = True
         else:
             state.sprinkler = False
 
@@ -92,11 +111,13 @@ class ActuatorController:
 
     def update(self, state: TwinState, fsm: MasterFSM) -> None:
         """Execute complete actuator control for one step."""
+        previous_fogger = state.fogger
+        previous_sprinkler = state.sprinkler
         self.reset(state)
         self.temperature_control(state, fsm)
-        self.humidity_control(state, fsm)
+        self.humidity_control(state, fsm, previous_fogger)
         self.co2_control(state, fsm)
-        self.moisture_control(state, fsm)
+        self.moisture_control(state, fsm, previous_sprinkler)
         self.contamination_control(state, fsm)
 
     def get_status(self, state: TwinState) -> dict:
