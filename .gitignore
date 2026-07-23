@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.DS_Store
+simulation_results.csv
+dashboard.json
