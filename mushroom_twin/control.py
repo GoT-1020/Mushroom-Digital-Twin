@@ -29,7 +29,13 @@ class ActuatorController:
         state.exhaust_fan = False
         state.fresh_air_fan = False
 
-    def temperature_control(self, state: TwinState, fsm: MasterFSM) -> None:
+    def temperature_control(
+        self,
+        state: TwinState,
+        fsm: MasterFSM,
+        previous_heater: bool = False,
+        previous_cooling_pad: bool = False,
+    ) -> None:
         if fsm.temperature_state == TemperatureState.LOW:
             state.heater = True
         elif fsm.temperature_state == TemperatureState.HIGH:
@@ -39,8 +45,17 @@ class ActuatorController:
             state.cooling_pad = True
             state.exhaust_fan = True
         else:
-            state.heater = False
-            state.cooling_pad = False
+            # NORMAL: hold whichever actuator was already correcting until
+            # the temperature recovers past threshold + hysteresis, so it
+            # doesn't chatter on/off every step right at the boundary.
+            state.heater = (
+                previous_heater
+                and state.temperature < Config.MIN_TEMPERATURE + Config.TEMPERATURE_HYSTERESIS
+            )
+            state.cooling_pad = (
+                previous_cooling_pad
+                and state.temperature > Config.MAX_TEMPERATURE - Config.TEMPERATURE_HYSTERESIS
+            )
 
     def humidity_control(
         self, state: TwinState, fsm: MasterFSM, previous_fogger: bool = False
@@ -51,9 +66,12 @@ class ActuatorController:
             state.fogger = False
             state.exhaust_fan = True
         elif fsm.humidity_state == HumidityState.CRITICAL:
+            # Emergency dehumidify: no fogging, exhaust on. Deliberately does
+            # not touch cooling_pad — temperature_control already decided
+            # that, and forcing it off here would silently disable cooling
+            # for as long as humidity stays critical.
             state.fogger = False
             state.exhaust_fan = True
-            state.cooling_pad = False
         elif (
             previous_fogger
             and state.humidity < Config.MIN_HUMIDITY + Config.HUMIDITY_HYSTERESIS
@@ -113,8 +131,10 @@ class ActuatorController:
         """Execute complete actuator control for one step."""
         previous_fogger = state.fogger
         previous_sprinkler = state.sprinkler
+        previous_heater = state.heater
+        previous_cooling_pad = state.cooling_pad
         self.reset(state)
-        self.temperature_control(state, fsm)
+        self.temperature_control(state, fsm, previous_heater, previous_cooling_pad)
         self.humidity_control(state, fsm, previous_fogger)
         self.co2_control(state, fsm)
         self.moisture_control(state, fsm, previous_sprinkler)

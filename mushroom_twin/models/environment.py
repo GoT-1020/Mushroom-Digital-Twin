@@ -33,6 +33,7 @@ class EnvironmentModel:
 
         # Ambient conditions
         self.ambient_temperature = Config.AMBIENT_TEMPERATURE
+        self.ambient_humidity = Config.AMBIENT_HUMIDITY
 
     @staticmethod
     def _clamp(value: float, minimum: float, maximum: float) -> float:
@@ -66,7 +67,10 @@ class EnvironmentModel:
         """Humidity dynamics: fogging + transpiration - ventilation - evaporation."""
         evaporation_loss = self.evaporation_rate(state.temperature, state.humidity)
         fogger_gain = self.kf if state.fogger else 0.0
-        ventilation_loss = self.kv if state.exhaust_fan else 0.0
+        if state.exhaust_fan:
+            ventilation_loss = self.kv * max(0.0, state.humidity - self.ambient_humidity)
+        else:
+            ventilation_loss = 0.0
         transpiration_gain = self.kt * state.fruit_weight
 
         delta_humidity = (

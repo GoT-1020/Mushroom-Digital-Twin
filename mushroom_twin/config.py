@@ -28,6 +28,7 @@ class Config:
     INITIAL_CO2 = 1000.0                 # ppm
     INITIAL_MOISTURE = 70.0              # %
     AMBIENT_TEMPERATURE = 30.0           # °C
+    AMBIENT_HUMIDITY = 55.0              # % (outside/inlet air pulled in by the exhaust fan)
 
     # ------------------------------------------------------------------
     # Initial Biological Conditions
@@ -56,6 +57,7 @@ class Config:
     # and all, over and over.
     HUMIDITY_HYSTERESIS = 5.0
     MOISTURE_HYSTERESIS = 5.0
+    TEMPERATURE_HYSTERESIS = 2.0
 
     # ------------------------------------------------------------------
     # Environment Model Coefficients
@@ -66,7 +68,13 @@ class Config:
     KR = 0.01
 
     KF = 1.20
-    KV = 0.90
+    # Ventilation exchange coefficient: %/hr of humidity removed per % that
+    # the chamber is above AMBIENT_HUMIDITY (proportional, like the KA
+    # ambient-temperature exchange term below), not a flat rate. A flat rate
+    # can't keep up with transpiration_gain (KT * fruit_weight) once fruit
+    # bodies are heavy, so humidity used to pin at the 100% clamp for the
+    # entire fruiting stage.
+    KV = 0.15
     KT = 0.02
 
     KS = 0.80
